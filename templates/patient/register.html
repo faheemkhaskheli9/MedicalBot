@@ -99,23 +99,6 @@
       </p>
     </div>
 
-    <!-- Success card (hidden until registration succeeds) -->
-    <div id="success-card" class="hidden bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
-      <div class="w-14 h-14 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-        <svg class="w-7 h-7 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-        </svg>
-      </div>
-      <h2 class="text-xl font-bold text-gray-900 mb-2">Account created!</h2>
-      <p class="text-sm text-gray-500 mb-4">Your patient account has been registered successfully.</p>
-      <p class="text-xs text-gray-400 font-mono mb-6 break-all">
-        Patient ID: <span id="patient-id-display" class="font-semibold text-gray-600"></span>
-      </p>
-      <a href="{% url 'home' %}"
-         class="inline-block px-6 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors">
-        Go to Home
-      </a>
-    </div>
 
   </div>
 </div>
@@ -127,8 +110,6 @@
   const btn  = document.getElementById('submit-btn');
   const errorBanner = document.getElementById('error-banner');
   const errorText   = document.getElementById('error-text');
-  const formCard    = document.getElementById('form-card');
-  const successCard = document.getElementById('success-card');
 
   function showError(msg) {
     errorText.textContent = msg;
@@ -170,10 +151,9 @@
       localStorage.setItem('access_token',  data.tokens.access);
       localStorage.setItem('refresh_token', data.tokens.refresh);
       localStorage.setItem('patient_id',    data.patient_id);
+      localStorage.setItem('patient_name',  payload.name);
 
-      document.getElementById('patient-id-display').textContent = data.patient_id;
-      formCard.classList.add('hidden');
-      successCard.classList.remove('hidden');
+      window.location.href = '/patient/profile/';
 
     } catch {
       showError('Network error. Please try again.');
