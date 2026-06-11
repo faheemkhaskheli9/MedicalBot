@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Patient
+from .models import ChatSession, Message, Patient
 
 
 class PatientRegisterSerializer(serializers.Serializer):
@@ -70,3 +70,42 @@ class PatientProfileSerializer(serializers.ModelSerializer):
         model = Patient
         fields = ["patient_id", "name", "age", "gender", "phone", "email", "date_joined"]
         read_only_fields = fields
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Message
+        fields = ["id", "sender", "content", "agent_name", "metadata", "created_at"]
+        read_only_fields = ["id", "sender", "agent_name", "metadata", "created_at"]
+
+
+class ChatSessionSerializer(serializers.ModelSerializer):
+    messages = MessageSerializer(many=True, read_only=True)
+    message_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatSession
+        fields = ["id", "status", "risk_level", "current_agent", "started_at", "ended_at", "message_count", "messages"]
+        read_only_fields = fields
+
+    def get_message_count(self, obj):
+        return obj.messages.count()
+
+
+class ChatSessionListSerializer(serializers.ModelSerializer):
+    message_count = serializers.SerializerMethodField()
+    last_message = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatSession
+        fields = ["id", "status", "risk_level", "started_at", "ended_at", "message_count", "last_message"]
+        read_only_fields = fields
+
+    def get_message_count(self, obj):
+        return obj.messages.count()
+
+    def get_last_message(self, obj):
+        msg = obj.messages.filter(sender="patient").last()
+        if msg:
+            return msg.content[:100]
+        return None

@@ -59,6 +59,10 @@
 
 {% block extra_js %}
 <script>
+  if (localStorage.getItem('access_token')) {
+    window.location.replace('/patient/profile/');
+  }
+
   const form  = document.getElementById('login-form');
   const btn   = document.getElementById('submit-btn');
   const errorBanner = document.getElementById('error-banner');
