@@ -16,6 +16,10 @@ def login_page(request):
     return render(request, "patient/login.html")
 
 
+def profile_page(request):
+    return render(request, "patient/profile.html")
+
+
 class PatientRegisterView(APIView):
     permission_classes = [AllowAny]
 

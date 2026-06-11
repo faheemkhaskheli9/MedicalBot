@@ -69,8 +69,8 @@
           </a>
         </div>
 
-        <!-- Auth buttons -->
-        <div class="hidden md:flex items-center gap-3">
+        <!-- Auth: guest -->
+        <div id="nav-guest" style="display:none" class="items-center gap-3">
           <a href="{% url 'patient-login-page' %}"
              class="px-4 py-2 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors">
             Log In
@@ -79,6 +79,21 @@
              class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
             Register
           </a>
+        </div>
+
+        <!-- Auth: logged in -->
+        <div id="nav-user" style="display:none" class="items-center gap-3">
+          <a href="{% url 'patient-profile-page' %}"
+             class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors">
+            <div id="nav-avatar"
+                 class="w-7 h-7 rounded-lg bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
+            </div>
+            <span id="nav-name" class="text-sm font-medium text-gray-700"></span>
+          </a>
+          <button onclick="logoutPatient()"
+                  class="px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+            Log Out
+          </button>
         </div>
 
         <!-- Mobile menu button -->
@@ -118,7 +133,8 @@
            class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
           Admin Panel
         </a>
-        <div class="pt-2 border-t border-gray-100 flex gap-2">
+        <!-- Mobile auth: guest -->
+        <div id="mob-guest" style="display:none" class="pt-2 border-t border-gray-100 gap-2 flex">
           <a href="{% url 'patient-login-page' %}"
              class="flex-1 text-center px-4 py-2 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors">
             Log In
@@ -127,6 +143,18 @@
              class="flex-1 text-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
             Register
           </a>
+        </div>
+
+        <!-- Mobile auth: logged in -->
+        <div id="mob-user" style="display:none" class="pt-2 border-t border-gray-100 gap-2 flex">
+          <a href="{% url 'patient-profile-page' %}"
+             class="flex-1 text-center px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors">
+            My Profile
+          </a>
+          <button onclick="logoutPatient()"
+                  class="flex-1 px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+            Log Out
+          </button>
         </div>
       </div>
     </div>
@@ -189,6 +217,7 @@
   </footer>
 
   <script>
+    // Mobile menu toggle
     const btn = document.getElementById('mobile-menu-btn');
     const menu = document.getElementById('mobile-menu');
     const iconOpen = document.getElementById('icon-open');
@@ -200,6 +229,31 @@
       iconOpen.classList.toggle('hidden');
       iconClose.classList.toggle('hidden');
     });
+
+    // Auth state
+    (function () {
+      const token = localStorage.getItem('access_token');
+      const name  = localStorage.getItem('patient_name') || 'Patient';
+
+      if (token) {
+        const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+        document.getElementById('nav-avatar').textContent = initials;
+        document.getElementById('nav-name').textContent   = name.split(' ')[0];
+        document.getElementById('nav-user').style.display = 'flex';
+        document.getElementById('mob-user').style.display = 'flex';
+      } else {
+        document.getElementById('nav-guest').style.display = 'flex';
+        document.getElementById('mob-guest').style.display = 'flex';
+      }
+    })();
+
+    function logoutPatient() {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('refresh_token');
+      localStorage.removeItem('patient_id');
+      localStorage.removeItem('patient_name');
+      window.location.href = '/';
+    }
   </script>
   {% block extra_js %}{% endblock %}
 </body>

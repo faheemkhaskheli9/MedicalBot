@@ -100,7 +100,18 @@
       localStorage.setItem('refresh_token', data.tokens.refresh);
       localStorage.setItem('patient_id',    data.patient_id);
 
-      window.location.href = '/';
+      // Fetch profile to get the patient name for the navbar
+      try {
+        const profileRes = await fetch('/api/patient/profile/', {
+          headers: { 'Authorization': `Bearer ${data.tokens.access}` },
+        });
+        if (profileRes.ok) {
+          const profile = await profileRes.json();
+          localStorage.setItem('patient_name', profile.name);
+        }
+      } catch { /* non-critical; navbar will fall back to "Patient" */ }
+
+      window.location.href = '/patient/profile/';
 
     } catch {
       showError('Network error. Please try again.');
