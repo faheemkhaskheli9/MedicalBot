@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .models import Patient
 from .serializers import PatientLoginSerializer, PatientProfileSerializer, PatientRegisterSerializer
 
 
@@ -45,9 +46,9 @@ class PatientLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        serializer = PatientLoginSerializer(data=request.data)
+        serializer = PatientLoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
-        patient = serializer.validated_data["user"]
+        patient = serializer.validated_data["patient"]
         refresh = RefreshToken.for_user(patient)
         return Response(
             {
@@ -64,5 +65,9 @@ class PatientProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        serializer = PatientProfileSerializer(request.user)
+        try:
+            patient = Patient.objects.get(pk=request.user.pk)
+        except Patient.DoesNotExist:
+            return Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = PatientProfileSerializer(patient)
         return Response(serializer.data)
