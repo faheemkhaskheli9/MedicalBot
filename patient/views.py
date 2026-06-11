@@ -1,3 +1,4 @@
+from django.shortcuts import render
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -5,6 +6,14 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .serializers import PatientLoginSerializer, PatientProfileSerializer, PatientRegisterSerializer
+
+
+def register_page(request):
+    return render(request, "patient/register.html")
+
+
+def login_page(request):
+    return render(request, "patient/login.html")
 
 
 class PatientRegisterView(APIView):
