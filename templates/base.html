@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}MedicalBot{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            medical: {
+              50:  '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+  <!-- Navbar -->
+  <nav class="bg-white shadow-sm border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between h-16">
+
+        <!-- Logo -->
+        <div class="flex items-center">
+          <a href="{% url 'home' %}" class="flex items-center gap-2">
+            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+              </svg>
+            </div>
+            <span class="text-xl font-bold text-gray-900">Medical<span class="text-blue-600">Bot</span></span>
+          </a>
+        </div>
+
+        <!-- Desktop nav links -->
+        <div class="hidden md:flex items-center gap-1">
+          <a href="{% url 'home' %}"
+             class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+            Home
+          </a>
+          <a href="#patient"
+             class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+            Patient Portal
+          </a>
+          <a href="#doctor"
+             class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+            Doctor Dashboard
+          </a>
+          <a href="#admin"
+             class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+            Admin Panel
+          </a>
+        </div>
+
+        <!-- Auth buttons -->
+        <div class="hidden md:flex items-center gap-3">
+          <a href="#login"
+             class="px-4 py-2 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors">
+            Log In
+          </a>
+          <a href="#register"
+             class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
+            Register
+          </a>
+        </div>
+
+        <!-- Mobile menu button -->
+        <div class="md:hidden flex items-center">
+          <button id="mobile-menu-btn" type="button"
+                  class="inline-flex items-center justify-center p-2 rounded-md text-gray-500 hover:text-blue-600 hover:bg-blue-50 focus:outline-none transition-colors"
+                  aria-expanded="false">
+            <span class="sr-only">Open main menu</span>
+            <svg id="icon-open" class="block h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+            </svg>
+            <svg id="icon-close" class="hidden h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Mobile menu -->
+    <div id="mobile-menu" class="hidden md:hidden border-t border-gray-100">
+      <div class="px-4 py-3 space-y-1">
+        <a href="{% url 'home' %}"
+           class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+          Home
+        </a>
+        <a href="#patient"
+           class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+          Patient Portal
+        </a>
+        <a href="#doctor"
+           class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+          Doctor Dashboard
+        </a>
+        <a href="#admin"
+           class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+          Admin Panel
+        </a>
+        <div class="pt-2 border-t border-gray-100 flex gap-2">
+          <a href="#login"
+             class="flex-1 text-center px-4 py-2 text-sm font-medium text-blue-600 border border-blue-600 rounded-lg hover:bg-blue-50 transition-colors">
+            Log In
+          </a>
+          <a href="#register"
+             class="flex-1 text-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
+            Register
+          </a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Flash messages -->
+  {% if messages %}
+  <div class="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 mt-4">
+    {% for message in messages %}
+    <div class="flex items-center gap-3 p-4 rounded-lg mb-2
+      {% if message.tags == 'error' %}bg-red-50 text-red-800 border border-red-200
+      {% elif message.tags == 'success' %}bg-green-50 text-green-800 border border-green-200
+      {% else %}bg-blue-50 text-blue-800 border border-blue-200{% endif %}">
+      <span class="text-sm">{{ message }}</span>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Page content -->
+  <main class="flex-1">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-gray-200 mt-auto">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <div>
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center">
+              <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+              </svg>
+            </div>
+            <span class="font-bold text-gray-900">Medical<span class="text-blue-600">Bot</span></span>
+          </div>
+          <p class="text-sm text-gray-500">AI-powered medical assistant for patients, doctors, and hospital staff.</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-gray-700 mb-3">Portals</h4>
+          <ul class="space-y-2 text-sm text-gray-500">
+            <li><a href="#patient" class="hover:text-blue-600 transition-colors">Patient Portal</a></li>
+            <li><a href="#doctor" class="hover:text-blue-600 transition-colors">Doctor Dashboard</a></li>
+            <li><a href="#admin" class="hover:text-blue-600 transition-colors">Admin Panel</a></li>
+          </ul>
+        </div>
+        <div>
+          <h4 class="text-sm font-semibold text-gray-700 mb-3">Disclaimer</h4>
+          <p class="text-sm text-gray-500">
+            This is not a replacement for a doctor. Please consult a qualified healthcare professional for medical advice.
+          </p>
+        </div>
+      </div>
+      <div class="mt-8 pt-6 border-t border-gray-100 text-center text-xs text-gray-400">
+        &copy; {% now "Y" %} MedicalBot. All rights reserved.
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const btn = document.getElementById('mobile-menu-btn');
+    const menu = document.getElementById('mobile-menu');
+    const iconOpen = document.getElementById('icon-open');
+    const iconClose = document.getElementById('icon-close');
+    btn.addEventListener('click', () => {
+      const expanded = btn.getAttribute('aria-expanded') === 'true';
+      btn.setAttribute('aria-expanded', String(!expanded));
+      menu.classList.toggle('hidden');
+      iconOpen.classList.toggle('hidden');
+      iconClose.classList.toggle('hidden');
+    });
+  </script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>
