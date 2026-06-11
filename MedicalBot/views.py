@@ -13,7 +13,9 @@ def api_root(request):
             "patient": {
                 "register": reverse("patient-register", request=request),
                 "login": reverse("patient-login", request=request),
+                "logout": reverse("patient-logout", request=request),
                 "profile": reverse("patient-profile", request=request),
+                "chat_sessions": reverse("chat-sessions", request=request),
             },
         }
     )
