@@ -1,6 +1,9 @@
+from unittest.mock import patch
+
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from .intent_detection import SUPPORTED_INTENTS
 from .models import ChatSession, Patient
 
 REGISTER_URL   = "/api/patient/register/"
@@ -275,3 +278,72 @@ class ChatMessageTests(APITestCase):
         self.client.credentials()
         r = self.client.post(self.messages_url, {"content": "test"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class MessageIntentTests(APITestCase):
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        session_r = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = session_r.data["id"]
+        self.messages_url = f"{SESSIONS_URL}{self.session_id}/messages/"
+
+    def _post_message(self, content, intent="symptom_check", confidence=0.95):
+        mock_result = {"intent": intent, "confidence": confidence}
+        with patch("patient.views.detect_intent", return_value=mock_result):
+            return self.client.post(self.messages_url, {"content": content}, format="json")
+
+    def test_patient_message_metadata_contains_intent(self):
+        r = self._post_message("I have a headache")
+        self.assertIn("metadata", r.data["patient_message"])
+        self.assertIn("intent", r.data["patient_message"]["metadata"])
+
+    def test_intent_is_a_supported_value(self):
+        r = self._post_message("I have a headache", intent="symptom_check")
+        intent = r.data["patient_message"]["metadata"]["intent"]
+        self.assertIn(intent, SUPPORTED_INTENTS)
+
+    def test_confidence_is_numeric(self):
+        r = self._post_message("I have a headache", confidence=0.9)
+        confidence = r.data["patient_message"]["metadata"]["confidence"]
+        self.assertIsInstance(confidence, float)
+
+    def test_session_metadata_updated_with_intent(self):
+        self._post_message("I need to book an appointment", intent="appointment_request")
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["session_metadata"]["last_intent"], "appointment_request")
+
+    def test_session_metadata_last_confidence_stored(self):
+        self._post_message("bill inquiry", intent="billing_question", confidence=0.88)
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertAlmostEqual(detail.data["session_metadata"]["last_confidence"], 0.88)
+
+    def test_session_metadata_updated_to_latest_intent(self):
+        self._post_message("I feel sick", intent="symptom_check")
+        self._post_message("When can I see a doctor?", intent="appointment_request")
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["session_metadata"]["last_intent"], "appointment_request")
+
+    def test_emergency_intent_stored(self):
+        r = self._post_message("I am having a heart attack!", intent="emergency", confidence=1.0)
+        self.assertEqual(r.data["patient_message"]["metadata"]["intent"], "emergency")
+
+    def test_openai_failure_falls_back_to_unknown(self):
+        with patch("patient.views.detect_intent", return_value={"intent": "unknown", "confidence": 0.0}):
+            r = self.client.post(self.messages_url, {"content": "gibberish xyz"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["patient_message"]["metadata"]["intent"], "unknown")
+
+    def test_unsupported_intent_remapped_to_unknown(self):
+        with patch("patient.views.detect_intent", return_value={"intent": "unknown", "confidence": 0.0}):
+            r = self.client.post(self.messages_url, {"content": "random text"}, format="json")
+        self.assertEqual(r.data["patient_message"]["metadata"]["intent"], "unknown")
+
+    def test_all_supported_intents_accepted(self):
+        for intent in SUPPORTED_INTENTS:
+            mock_result = {"intent": intent, "confidence": 0.8}
+            with patch("patient.views.detect_intent", return_value=mock_result):
+                r = self.client.post(self.messages_url, {"content": "test message"}, format="json")
+            self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+            self.assertEqual(r.data["patient_message"]["metadata"]["intent"], intent)

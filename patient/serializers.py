@@ -85,7 +85,7 @@ class ChatSessionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatSession
-        fields = ["id", "status", "risk_level", "current_agent", "started_at", "ended_at", "message_count", "messages"]
+        fields = ["id", "status", "risk_level", "current_agent", "session_metadata", "started_at", "ended_at", "message_count", "messages"]
         read_only_fields = fields
 
     def get_message_count(self, obj):
@@ -98,7 +98,7 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ChatSession
-        fields = ["id", "status", "risk_level", "started_at", "ended_at", "message_count", "last_message"]
+        fields = ["id", "status", "risk_level", "session_metadata", "started_at", "ended_at", "message_count", "last_message"]
         read_only_fields = fields
 
     def get_message_count(self, obj):
