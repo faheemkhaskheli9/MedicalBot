@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import ChatSession, Message, Patient
+from .models import ChatSession, EmergencyEvent, Message, Patient
 
 
 class PatientRegisterSerializer(serializers.Serializer):
@@ -79,13 +79,24 @@ class MessageSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "sender", "agent_name", "metadata", "created_at"]
 
 
+class EmergencyEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmergencyEvent
+        fields = ["id", "trigger_message", "symptoms_detected", "guidance_given", "created_at"]
+        read_only_fields = fields
+
+
 class ChatSessionSerializer(serializers.ModelSerializer):
     messages = MessageSerializer(many=True, read_only=True)
+    emergency_events = EmergencyEventSerializer(many=True, read_only=True)
     message_count = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatSession
-        fields = ["id", "status", "risk_level", "current_agent", "session_metadata", "started_at", "ended_at", "message_count", "messages"]
+        fields = [
+            "id", "status", "risk_level", "current_agent", "session_metadata",
+            "started_at", "ended_at", "message_count", "messages", "emergency_events",
+        ]
         read_only_fields = fields
 
     def get_message_count(self, obj):

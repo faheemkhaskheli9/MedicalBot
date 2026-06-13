@@ -6,8 +6,9 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .emergency_detection import EMERGENCY_GUIDANCE, detect_emergency
 from .intent_detection import detect_intent
-from .models import ChatSession, Message, Patient
+from .models import ChatSession, EmergencyEvent, Message, Patient
 from .serializers import (
     ChatSessionListSerializer,
     ChatSessionSerializer,
@@ -184,6 +185,39 @@ class ChatMessageCreateView(APIView):
         if not content:
             return Response({"error": "Message content is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        emergency_result = detect_emergency(content)
+        if emergency_result["is_emergency"]:
+            patient_msg = Message.objects.create(
+                session=session,
+                sender="patient",
+                content=content,
+                metadata={"emergency": True, "symptoms_detected": emergency_result["symptoms_detected"]},
+            )
+            EmergencyEvent.objects.create(
+                session=session,
+                patient=patient,
+                trigger_message=content,
+                symptoms_detected=emergency_result["symptoms_detected"],
+                guidance_given=EMERGENCY_GUIDANCE,
+            )
+            session.risk_level = "emergency"
+            session.save(update_fields=["risk_level"])
+            bot_msg = Message.objects.create(
+                session=session,
+                sender="bot",
+                content=EMERGENCY_GUIDANCE,
+                agent_name="emergency_triage",
+                metadata={"emergency": True, "symptoms_detected": emergency_result["symptoms_detected"]},
+            )
+            return Response(
+                {
+                    "emergency": True,
+                    "patient_message": MessageSerializer(patient_msg).data,
+                    "bot_message": MessageSerializer(bot_msg).data,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
         intent_result = detect_intent(content)
 
         patient_msg = Message.objects.create(
@@ -205,6 +239,7 @@ class ChatMessageCreateView(APIView):
 
         return Response(
             {
+                "emergency": False,
                 "patient_message": MessageSerializer(patient_msg).data,
                 "bot_message": MessageSerializer(bot_msg).data,
             },

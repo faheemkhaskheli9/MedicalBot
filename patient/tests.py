@@ -4,7 +4,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .intent_detection import SUPPORTED_INTENTS
-from .models import ChatSession, Patient
+from .models import ChatSession, EmergencyEvent, Patient
 
 REGISTER_URL   = "/api/patient/register/"
 LOGIN_URL      = "/api/patient/login/"
@@ -291,8 +291,10 @@ class MessageIntentTests(APITestCase):
 
     def _post_message(self, content, intent="symptom_check", confidence=0.95):
         mock_result = {"intent": intent, "confidence": confidence}
-        with patch("patient.views.detect_intent", return_value=mock_result):
-            return self.client.post(self.messages_url, {"content": content}, format="json")
+        non_emergency = {"is_emergency": False, "symptoms_detected": [], "confidence": 0.0}
+        with patch("patient.views.detect_emergency", return_value=non_emergency):
+            with patch("patient.views.detect_intent", return_value=mock_result):
+                return self.client.post(self.messages_url, {"content": content}, format="json")
 
     def test_patient_message_metadata_contains_intent(self):
         r = self._post_message("I have a headache")
@@ -347,3 +349,144 @@ class MessageIntentTests(APITestCase):
                 r = self.client.post(self.messages_url, {"content": "test message"}, format="json")
             self.assertEqual(r.status_code, status.HTTP_201_CREATED)
             self.assertEqual(r.data["patient_message"]["metadata"]["intent"], intent)
+
+
+class EmergencyTriageTests(APITestCase):
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        session_r = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = session_r.data["id"]
+        self.messages_url = f"{SESSIONS_URL}{self.session_id}/messages/"
+
+    _EMERGENCY_RESULT = {
+        "is_emergency": True,
+        "symptoms_detected": ["chest pain", "sweating"],
+        "confidence": 0.98,
+    }
+    _NORMAL_RESULT = {
+        "is_emergency": False,
+        "symptoms_detected": [],
+        "confidence": 0.03,
+    }
+    _NORMAL_INTENT = {"intent": "symptom_check", "confidence": 0.85}
+
+    def _post_emergency(self, content="I have chest pain with sweating"):
+        with patch("patient.views.detect_emergency", return_value=self._EMERGENCY_RESULT):
+            return self.client.post(self.messages_url, {"content": content}, format="json")
+
+    def _post_normal(self, content="I have a mild headache"):
+        with patch("patient.views.detect_emergency", return_value=self._NORMAL_RESULT):
+            with patch("patient.views.detect_intent", return_value=self._NORMAL_INTENT):
+                return self.client.post(self.messages_url, {"content": content}, format="json")
+
+    def test_emergency_returns_201(self):
+        r = self._post_emergency()
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+
+    def test_emergency_flag_true_in_response(self):
+        r = self._post_emergency()
+        self.assertTrue(r.data["emergency"])
+
+    def test_non_emergency_flag_false_in_response(self):
+        r = self._post_normal()
+        self.assertFalse(r.data["emergency"])
+
+    def test_emergency_bot_reply_is_guidance(self):
+        r = self._post_emergency()
+        self.assertIn("EMERGENCY ALERT", r.data["bot_message"]["content"])
+
+    def test_emergency_bot_agent_is_emergency_triage(self):
+        r = self._post_emergency()
+        self.assertEqual(r.data["bot_message"]["agent_name"], "emergency_triage")
+
+    def test_emergency_does_not_use_placeholder_agent(self):
+        r = self._post_emergency()
+        self.assertNotEqual(r.data["bot_message"]["agent_name"], "placeholder")
+
+    def test_emergency_sets_session_risk_level(self):
+        self._post_emergency()
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["risk_level"], "emergency")
+
+    def test_normal_message_does_not_set_emergency_risk(self):
+        self._post_normal()
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertNotEqual(detail.data.get("risk_level"), "emergency")
+
+    def test_emergency_event_logged_to_db(self):
+        self._post_emergency("I have chest pain with sweating")
+        session = ChatSession.objects.get(id=self.session_id)
+        self.assertEqual(session.emergency_events.count(), 1)
+
+    def test_emergency_event_stores_trigger_message(self):
+        self._post_emergency("I have chest pain with sweating")
+        event = ChatSession.objects.get(id=self.session_id).emergency_events.first()
+        self.assertEqual(event.trigger_message, "I have chest pain with sweating")
+
+    def test_emergency_event_stores_symptoms(self):
+        self._post_emergency()
+        event = ChatSession.objects.get(id=self.session_id).emergency_events.first()
+        self.assertEqual(event.symptoms_detected, ["chest pain", "sweating"])
+
+    def test_emergency_event_stores_guidance(self):
+        self._post_emergency()
+        event = ChatSession.objects.get(id=self.session_id).emergency_events.first()
+        self.assertIn("EMERGENCY ALERT", event.guidance_given)
+
+    def test_emergency_events_visible_in_session_detail(self):
+        self._post_emergency()
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertIn("emergency_events", detail.data)
+        self.assertEqual(len(detail.data["emergency_events"]), 1)
+
+    def test_emergency_event_fields_in_session_detail(self):
+        self._post_emergency("Chest pain with sweating")
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        event = detail.data["emergency_events"][0]
+        self.assertIn("id", event)
+        self.assertIn("trigger_message", event)
+        self.assertIn("symptoms_detected", event)
+        self.assertIn("guidance_given", event)
+        self.assertIn("created_at", event)
+
+    def test_no_emergency_no_events_in_session_detail(self):
+        self._post_normal()
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(len(detail.data["emergency_events"]), 0)
+
+    def test_emergency_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(self.messages_url, {"content": "chest pain"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_emergency_on_closed_session_rejected(self):
+        self.client.patch(f"{SESSIONS_URL}{self.session_id}/", {"status": "completed"}, format="json")
+        with patch("patient.views.detect_emergency", return_value=self._EMERGENCY_RESULT):
+            r = self.client.post(self.messages_url, {"content": "chest pain"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_multiple_emergency_messages_each_logged(self):
+        self._post_emergency("Chest pain")
+        self._post_emergency("Still having chest pain")
+        session = ChatSession.objects.get(id=self.session_id)
+        self.assertEqual(session.emergency_events.count(), 2)
+
+    def test_emergency_examples_trigger_emergency_flag(self):
+        examples = [
+            "Chest pain with sweating",
+            "Severe shortness of breath",
+            "Stroke symptoms — face drooping",
+            "Unconsciousness",
+            "Severe bleeding",
+            "Seizure",
+            "Suicidal thoughts",
+            "Severe allergic reaction",
+            "Pregnancy emergency",
+            "High fever in infant",
+        ]
+        for msg in examples:
+            with patch("patient.views.detect_emergency", return_value=self._EMERGENCY_RESULT):
+                r = self.client.post(self.messages_url, {"content": msg}, format="json")
+            self.assertTrue(r.data.get("emergency"), f"Expected emergency=True for: {msg}")

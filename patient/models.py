@@ -77,3 +77,20 @@ class Message(models.Model):
 
     def __str__(self):
         return f"[{self.sender}] {self.content[:60]}"
+
+
+class EmergencyEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="emergency_events")
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="emergency_events")
+    trigger_message = models.TextField()
+    symptoms_detected = models.JSONField(default=list)
+    guidance_given = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "emergency_events"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Emergency [{self.patient.name}] at {self.created_at:%Y-%m-%d %H:%M}"
