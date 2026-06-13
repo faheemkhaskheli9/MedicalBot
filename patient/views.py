@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .intent_detection import detect_intent
 from .models import ChatSession, Message, Patient
 from .serializers import (
     ChatSessionListSerializer,
@@ -183,7 +184,22 @@ class ChatMessageCreateView(APIView):
         if not content:
             return Response({"error": "Message content is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        patient_msg = Message.objects.create(session=session, sender="patient", content=content)
+        intent_result = detect_intent(content)
+
+        patient_msg = Message.objects.create(
+            session=session,
+            sender="patient",
+            content=content,
+            metadata=intent_result,
+        )
+
+        session.session_metadata = {
+            **session.session_metadata,
+            "last_intent": intent_result["intent"],
+            "last_confidence": intent_result["confidence"],
+        }
+        session.save()
+
         bot_reply_text = _placeholder_bot_reply(session, content)
         bot_msg = Message.objects.create(session=session, sender="bot", content=bot_reply_text, agent_name="placeholder")
 
