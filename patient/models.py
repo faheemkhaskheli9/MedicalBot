@@ -80,6 +80,33 @@ class Message(models.Model):
         return f"[{self.sender}] {self.content[:60]}"
 
 
+BLOOD_TYPE_CHOICES = [
+    ("A+", "A+"), ("A-", "A-"),
+    ("B+", "B+"), ("B-", "B-"),
+    ("AB+", "AB+"), ("AB-", "AB-"),
+    ("O+", "O+"), ("O-", "O-"),
+    ("unknown", "Unknown"),
+]
+
+
+class MedicalHistory(models.Model):
+    patient = models.OneToOneField(Patient, on_delete=models.CASCADE, related_name="medical_history")
+    blood_type = models.CharField(max_length=10, choices=BLOOD_TYPE_CHOICES, default="unknown")
+    chronic_conditions = models.JSONField(default=list, blank=True)
+    allergies = models.JSONField(default=list, blank=True)
+    current_medications = models.JSONField(default=list, blank=True)
+    emergency_contact_name = models.CharField(max_length=255, blank=True, default="")
+    emergency_contact_phone = models.CharField(max_length=20, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "medical_histories"
+
+    def __str__(self):
+        return f"Medical history for {self.patient.name}"
+
+
 class EmergencyEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="emergency_events")

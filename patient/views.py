@@ -9,11 +9,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .agents.runner import run_triage_graph
 from .emergency_detection import EMERGENCY_GUIDANCE, detect_emergency
 from .intent_detection import detect_intent
-from .models import ChatSession, EmergencyEvent, Message, Patient
+from .models import ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
 from .summary import generate_session_summary
 from .serializers import (
     ChatSessionListSerializer,
     ChatSessionSerializer,
+    MedicalHistorySerializer,
     MessageSerializer,
     PatientLoginSerializer,
     PatientProfileSerializer,
@@ -308,6 +309,43 @@ class ChatSessionSummaryView(APIView):
         session.save(update_fields=["summary", "risk_level"])
 
         return Response({"summary": summary}, status=status.HTTP_200_OK)
+
+
+class MedicalHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_patient(self, request):
+        try:
+            return Patient.objects.get(pk=request.user.pk), None
+        except Patient.DoesNotExist:
+            return None, Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    def get(self, request):
+        patient, err = self._get_patient(request)
+        if err:
+            return err
+        history, _ = MedicalHistory.objects.get_or_create(patient=patient)
+        return Response(MedicalHistorySerializer(history).data)
+
+    def put(self, request):
+        patient, err = self._get_patient(request)
+        if err:
+            return err
+        history, _ = MedicalHistory.objects.get_or_create(patient=patient)
+        serializer = MedicalHistorySerializer(history, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def patch(self, request):
+        patient, err = self._get_patient(request)
+        if err:
+            return err
+        history, _ = MedicalHistory.objects.get_or_create(patient=patient)
+        serializer = MedicalHistorySerializer(history, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class PatientLogoutView(APIView):
