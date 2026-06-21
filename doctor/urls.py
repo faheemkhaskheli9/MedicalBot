@@ -10,6 +10,8 @@ from .views import (
     DoctorRegisterView,
     PatientSessionDetailForDoctorView,
     PatientSessionListView,
+    PrescriptionDetailView,
+    PrescriptionListCreateView,
     SessionAssignView,
 )
 
@@ -24,4 +26,6 @@ urlpatterns = [
     path("appointments/<uuid:appointment_id>/", DoctorAppointmentDetailView.as_view(), name="doctor-appointment-detail"),
     path("patients/sessions/<uuid:session_id>/notes/", DoctorNoteListCreateView.as_view(), name="doctor-session-notes"),
     path("patients/sessions/<uuid:session_id>/notes/<uuid:note_id>/", DoctorNoteDetailView.as_view(), name="doctor-session-note-detail"),
+    path("patients/sessions/<uuid:session_id>/prescriptions/", PrescriptionListCreateView.as_view(), name="doctor-session-prescriptions"),
+    path("patients/sessions/<uuid:session_id>/prescriptions/<uuid:prescription_id>/", PrescriptionDetailView.as_view(), name="doctor-session-prescription-detail"),
 ]

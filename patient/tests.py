@@ -980,3 +980,83 @@ class AppointmentPatientTests(APITestCase):
         self.assertEqual(len(r.data), 1)
         r2 = self.client.get(f"{APPOINTMENTS_URL}?status=confirmed")
         self.assertEqual(len(r2.data), 0)
+
+
+PATIENT_PRESCRIPTIONS_URL = "/api/patient/prescriptions/"
+VALID_PRESCRIPTION = {
+    "medications": [{"name": "Paracetamol", "dose": "500mg", "frequency": "3x daily"}],
+    "instructions": "Rest and hydrate.",
+}
+
+
+class PatientPrescriptionTests(APITestCase):
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+
+        pr = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = pr.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        sr = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+
+    def _create_prescription(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+        r = self.client.post(
+            f"/api/doctor/patients/sessions/{self.session_id}/prescriptions/",
+            VALID_PRESCRIPTION,
+            format="json",
+        )
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        return r
+
+    def test_patient_can_list_own_prescriptions(self):
+        self._create_prescription()
+        r = self.client.get(PATIENT_PRESCRIPTIONS_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+
+    def test_prescription_list_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(PATIENT_PRESCRIPTIONS_URL)
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_can_list_prescriptions_for_session(self):
+        self._create_prescription()
+        r = self.client.get(f"{SESSIONS_URL}{self.session_id}/prescriptions/")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+
+    def test_session_prescriptions_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(f"{SESSIONS_URL}{self.session_id}/prescriptions/")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_prescription_response_contains_expected_fields(self):
+        self._create_prescription()
+        r = self.client.get(PATIENT_PRESCRIPTIONS_URL)
+        rx = r.data[0]
+        self.assertIn("medications", rx)
+        self.assertIn("instructions", rx)
+        self.assertIn("doctor_name", rx)
+
+    def test_second_patient_cannot_see_prescriptions(self):
+        self._create_prescription()
+        other = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        r = self.client.get(PATIENT_PRESCRIPTIONS_URL)
+        self.assertEqual(len(r.data), 0)
+
+    def test_patient_cannot_access_other_sessions_prescriptions(self):
+        self._create_prescription()
+        other = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        r = self.client.get(f"{SESSIONS_URL}{self.session_id}/prescriptions/")
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_no_prescriptions_returns_empty_list(self):
+        r = self.client.get(PATIENT_PRESCRIPTIONS_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data, [])

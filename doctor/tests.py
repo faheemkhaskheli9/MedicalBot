@@ -588,3 +588,155 @@ class DoctorAppointmentTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {dr2.data['tokens']['access']}")
         r = self.client.get(DOCTOR_APPOINTMENTS_URL)
         self.assertEqual(len(r.data), 0)
+
+
+def _prescriptions_url(session_id):
+    return f"/api/doctor/patients/sessions/{session_id}/prescriptions/"
+
+
+def _prescription_detail_url(session_id, prescription_id):
+    return f"/api/doctor/patients/sessions/{session_id}/prescriptions/{prescription_id}/"
+
+
+VALID_PRESCRIPTION_PAYLOAD = {
+    "medications": [
+        {"name": "Amoxicillin", "dose": "500mg", "frequency": "3x daily", "duration": "7 days"}
+    ],
+    "instructions": "Take with food. Avoid alcohol.",
+    "follow_up_date": "2026-07-01",
+}
+
+
+class DoctorPrescriptionTests(APITestCase):
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+
+        second_doctor_payload = {
+            **VALID_DOCTOR_PAYLOAD,
+            "email": "other.doc@hospital.com",
+            "license_number": "LIC-999",
+        }
+        dr2 = self.client.post(DOCTOR_REGISTER_URL, second_doctor_payload, format="json")
+        self.other_doctor_token = dr2.data["tokens"]["access"]
+
+        pr = self.client.post(PATIENT_REGISTER_URL, VALID_PATIENT_PAYLOAD, format="json")
+        self.patient_token = pr.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+        sr = self.client.post(PATIENT_SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+
+    def _auth_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+
+    def _auth_other_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.other_doctor_token}")
+
+    def _auth_patient(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+
+    def test_doctor_can_create_prescription(self):
+        self._auth_doctor()
+        r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertIn("id", r.data)
+        self.assertEqual(r.data["doctor_name"], VALID_DOCTOR_PAYLOAD["name"])
+
+    def test_create_prescription_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_cannot_create_prescription(self):
+        self._auth_patient()
+        r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_empty_medications_list_rejected(self):
+        self._auth_doctor()
+        payload = {**VALID_PRESCRIPTION_PAYLOAD, "medications": []}
+        r = self.client.post(_prescriptions_url(self.session_id), payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_missing_medications_rejected(self):
+        self._auth_doctor()
+        payload = {"instructions": "Rest well.", "follow_up_date": "2026-07-01"}
+        r = self.client.post(_prescriptions_url(self.session_id), payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_doctor_can_list_prescriptions_for_session(self):
+        self._auth_doctor()
+        self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        r = self.client.get(_prescriptions_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+
+    def test_unknown_session_returns_404(self):
+        self._auth_doctor()
+        r = self.client.post(
+            _prescriptions_url("00000000-0000-0000-0000-000000000000"),
+            VALID_PRESCRIPTION_PAYLOAD,
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_doctor_can_get_prescription_detail(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        rx_id = create_r.data["id"]
+        r = self.client.get(_prescription_detail_url(self.session_id, rx_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["instructions"], VALID_PRESCRIPTION_PAYLOAD["instructions"])
+
+    def test_doctor_can_update_own_prescription(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        rx_id = create_r.data["id"]
+        r = self.client.patch(
+            _prescription_detail_url(self.session_id, rx_id),
+            {"instructions": "Updated instructions."},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["instructions"], "Updated instructions.")
+
+    def test_other_doctor_cannot_update_prescription(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        rx_id = create_r.data["id"]
+        self._auth_other_doctor()
+        r = self.client.patch(
+            _prescription_detail_url(self.session_id, rx_id),
+            {"instructions": "Hijacked."},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_other_doctor_can_read_prescription(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        rx_id = create_r.data["id"]
+        self._auth_other_doctor()
+        r = self.client.get(_prescription_detail_url(self.session_id, rx_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_doctor_can_delete_own_prescription(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        rx_id = create_r.data["id"]
+        r = self.client.delete(_prescription_detail_url(self.session_id, rx_id))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_other_doctor_cannot_delete_prescription(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        rx_id = create_r.data["id"]
+        self._auth_other_doctor()
+        r = self.client.delete(_prescription_detail_url(self.session_id, rx_id))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_prescription_fields_present(self):
+        self._auth_doctor()
+        create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        for field in ["id", "doctor_name", "session_id", "medications", "instructions", "follow_up_date", "created_at"]:
+            self.assertIn(field, create_r.data)

@@ -7,7 +7,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from patient.models import Appointment, ChatSession
 from patient.serializers import AppointmentSerializer
 
-from .models import Doctor, DoctorNote
+from .models import Doctor, DoctorNote, Prescription
 from .serializers import (
     DoctorAppointmentSerializer,
     DoctorLoginSerializer,
@@ -16,6 +16,7 @@ from .serializers import (
     DoctorRegisterSerializer,
     PatientSessionDetailSerializer,
     PatientSessionListSerializer,
+    PrescriptionSerializer,
 )
 
 
@@ -145,6 +146,88 @@ class DoctorNoteListCreateView(APIView):
             note=serializer.validated_data["note"],
         )
         return Response(DoctorNoteSerializer(note).data, status=status.HTTP_201_CREATED)
+
+
+class PrescriptionListCreateView(APIView):
+    """Doctor creates/lists prescriptions for a patient session."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_doctor_and_session(self, request, session_id):
+        try:
+            doctor = Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return None, None, Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            session = ChatSession.objects.get(id=session_id)
+        except ChatSession.DoesNotExist:
+            return None, None, Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+        return doctor, session, None
+
+    def get(self, request, session_id):
+        doctor, session, err = self._get_doctor_and_session(request, session_id)
+        if err:
+            return err
+        prescriptions = Prescription.objects.filter(session=session).select_related("doctor")
+        return Response(PrescriptionSerializer(prescriptions, many=True).data)
+
+    def post(self, request, session_id):
+        doctor, session, err = self._get_doctor_and_session(request, session_id)
+        if err:
+            return err
+        serializer = PrescriptionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        prescription = serializer.save(doctor=doctor, session=session)
+        return Response(PrescriptionSerializer(prescription).data, status=status.HTTP_201_CREATED)
+
+
+class PrescriptionDetailView(APIView):
+    """Retrieve or update a single prescription (only the authoring doctor may update)."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_doctor_and_prescription(self, request, session_id, prescription_id):
+        try:
+            doctor = Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return None, None, Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            prescription = Prescription.objects.select_related("doctor").get(
+                id=prescription_id, session_id=session_id
+            )
+        except Prescription.DoesNotExist:
+            return None, None, Response({"error": "Prescription not found."}, status=status.HTTP_404_NOT_FOUND)
+        return doctor, prescription, None
+
+    def get(self, request, session_id, prescription_id):
+        _, prescription, err = self._get_doctor_and_prescription(request, session_id, prescription_id)
+        if err:
+            return err
+        return Response(PrescriptionSerializer(prescription).data)
+
+    def patch(self, request, session_id, prescription_id):
+        doctor, prescription, err = self._get_doctor_and_prescription(request, session_id, prescription_id)
+        if err:
+            return err
+        if prescription.doctor_id != doctor.pk:
+            return Response(
+                {"error": "You can only edit your own prescriptions."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = PrescriptionSerializer(prescription, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(PrescriptionSerializer(prescription).data)
+
+    def delete(self, request, session_id, prescription_id):
+        doctor, prescription, err = self._get_doctor_and_prescription(request, session_id, prescription_id)
+        if err:
+            return err
+        if prescription.doctor_id != doctor.pk:
+            return Response(
+                {"error": "You can only delete your own prescriptions."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        prescription.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class DoctorAppointmentListView(APIView):
