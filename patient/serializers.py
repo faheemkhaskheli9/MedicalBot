@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import ChatSession, EmergencyEvent, Message, Patient
+from .models import ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
 
 
 class PatientRegisterSerializer(serializers.Serializer):
@@ -70,6 +70,17 @@ class PatientProfileSerializer(serializers.ModelSerializer):
         model = Patient
         fields = ["patient_id", "name", "age", "gender", "phone", "email", "date_joined"]
         read_only_fields = fields
+
+
+class MedicalHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MedicalHistory
+        fields = [
+            "blood_type", "chronic_conditions", "allergies",
+            "current_medications", "emergency_contact_name",
+            "emergency_contact_phone", "notes", "updated_at",
+        ]
+        read_only_fields = ["updated_at"]
 
 
 class MessageSerializer(serializers.ModelSerializer):

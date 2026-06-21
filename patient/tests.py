@@ -785,3 +785,86 @@ class SessionSummaryTests(APITestCase):
         with patch("patient.views.generate_session_summary", side_effect=Exception("OpenAI down")):
             r = self.client.post(self.summary_url, format="json")
         self.assertEqual(r.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+MEDICAL_HISTORY_URL = "/api/patient/medical-history/"
+
+VALID_HISTORY_PAYLOAD = {
+    "blood_type": "O+",
+    "chronic_conditions": ["diabetes", "hypertension"],
+    "allergies": ["penicillin"],
+    "current_medications": ["metformin 500mg"],
+    "emergency_contact_name": "Sara Khan",
+    "emergency_contact_phone": "03001112222",
+    "notes": "Patient prefers morning appointments.",
+}
+
+
+class MedicalHistoryTests(APITestCase):
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def test_get_returns_200_with_defaults(self):
+        r = self.client.get(MEDICAL_HISTORY_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("blood_type", r.data)
+        self.assertIn("chronic_conditions", r.data)
+        self.assertIn("allergies", r.data)
+        self.assertIn("current_medications", r.data)
+
+    def test_get_auto_creates_empty_history(self):
+        r = self.client.get(MEDICAL_HISTORY_URL)
+        self.assertEqual(r.data["chronic_conditions"], [])
+        self.assertEqual(r.data["allergies"], [])
+        self.assertEqual(r.data["current_medications"], [])
+
+    def test_get_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(MEDICAL_HISTORY_URL)
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_put_creates_full_history(self):
+        r = self.client.put(MEDICAL_HISTORY_URL, VALID_HISTORY_PAYLOAD, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["blood_type"], "O+")
+        self.assertEqual(r.data["chronic_conditions"], ["diabetes", "hypertension"])
+        self.assertEqual(r.data["allergies"], ["penicillin"])
+        self.assertEqual(r.data["emergency_contact_name"], "Sara Khan")
+
+    def test_put_persists_to_db(self):
+        self.client.put(MEDICAL_HISTORY_URL, VALID_HISTORY_PAYLOAD, format="json")
+        r = self.client.get(MEDICAL_HISTORY_URL)
+        self.assertEqual(r.data["blood_type"], "O+")
+        self.assertEqual(r.data["notes"], "Patient prefers morning appointments.")
+
+    def test_patch_updates_partial_fields(self):
+        self.client.put(MEDICAL_HISTORY_URL, VALID_HISTORY_PAYLOAD, format="json")
+        r = self.client.patch(MEDICAL_HISTORY_URL, {"blood_type": "A-"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["blood_type"], "A-")
+        self.assertEqual(r.data["chronic_conditions"], ["diabetes", "hypertension"])
+
+    def test_put_requires_auth(self):
+        self.client.credentials()
+        r = self.client.put(MEDICAL_HISTORY_URL, VALID_HISTORY_PAYLOAD, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_invalid_blood_type_rejected(self):
+        payload = {**VALID_HISTORY_PAYLOAD, "blood_type": "Z+"}
+        r = self.client.put(MEDICAL_HISTORY_URL, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_second_patient_has_isolated_history(self):
+        self.client.put(MEDICAL_HISTORY_URL, VALID_HISTORY_PAYLOAD, format="json")
+        other_payload = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other_payload, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        r = self.client.get(MEDICAL_HISTORY_URL)
+        self.assertEqual(r.data["chronic_conditions"], [])
+
+    def test_updated_at_is_present(self):
+        r = self.client.get(MEDICAL_HISTORY_URL)
+        self.assertIn("updated_at", r.data)
+        self.assertIsNotNone(r.data["updated_at"])
