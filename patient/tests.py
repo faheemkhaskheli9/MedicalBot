@@ -660,3 +660,128 @@ class TriageOrchestatorTests(APITestCase):
                 "risk_level": None,
             }
             self.assertEqual(route_by_intent(state), "general", f"Failed for intent: {intent}")
+
+
+SUMMARY_URL_TMPL = "/api/patient/chat/sessions/{}/summary/"
+
+_MOCK_SUMMARY = {
+    "chief_complaint": "Persistent headache for two days.",
+    "symptom_details": {
+        "location": "head",
+        "duration": "2 days",
+        "severity": 6,
+        "character": "throbbing",
+        "aggravating_factors": ["bright light"],
+        "relieving_factors": ["rest"],
+        "associated_symptoms": ["nausea"],
+    },
+    "risk_level": "routine",
+    "recommended_action": "Schedule GP appointment within 1 week.",
+    "notes_for_doctor": "Patient has had similar headaches before.",
+    "generated_at": "2026-06-21T10:00:00+00:00",
+}
+
+
+class SessionSummaryTests(APITestCase):
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        session_r = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = session_r.data["id"]
+        self.summary_url = SUMMARY_URL_TMPL.format(self.session_id)
+
+    def _send_messages(self, count=2):
+        for i in range(count):
+            with patch("patient.views.detect_emergency", return_value=_NON_EMERGENCY), \
+                 patch("patient.views.detect_intent", return_value=_SYMPTOM_INTENT), \
+                 patch("patient.views.run_triage_graph", return_value=_MOCK_GRAPH_RESULT):
+                self.client.post(
+                    f"{SESSIONS_URL}{self.session_id}/messages/",
+                    {"content": f"Patient message {i + 1}"},
+                    format="json",
+                )
+
+    def _post_summary(self, mock_summary=None):
+        if mock_summary is None:
+            mock_summary = _MOCK_SUMMARY
+        with patch("patient.views.generate_session_summary", return_value=mock_summary):
+            return self.client.post(self.summary_url, format="json")
+
+    def test_summary_returns_200(self):
+        self._send_messages(2)
+        r = self._post_summary()
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_summary_requires_auth(self):
+        self._send_messages(2)
+        self.client.credentials()
+        with patch("patient.views.generate_session_summary", return_value=_MOCK_SUMMARY):
+            r = self.client.post(self.summary_url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_summary_returns_structured_data(self):
+        self._send_messages(2)
+        r = self._post_summary()
+        self.assertIn("summary", r.data)
+        summary = r.data["summary"]
+        self.assertIn("chief_complaint", summary)
+        self.assertIn("symptom_details", summary)
+        self.assertIn("risk_level", summary)
+        self.assertIn("recommended_action", summary)
+        self.assertIn("generated_at", summary)
+
+    def test_summary_stored_on_session(self):
+        self._send_messages(2)
+        self._post_summary()
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertIsNotNone(detail.data["summary"])
+        self.assertEqual(detail.data["summary"]["chief_complaint"], _MOCK_SUMMARY["chief_complaint"])
+
+    def test_summary_updates_session_risk_level(self):
+        self._send_messages(2)
+        urgent_summary = {**_MOCK_SUMMARY, "risk_level": "urgent"}
+        self._post_summary(mock_summary=urgent_summary)
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["risk_level"], "urgent")
+
+    def test_summary_requires_at_least_2_patient_messages(self):
+        self._send_messages(1)
+        r = self._post_summary()
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", r.data)
+
+    def test_summary_rejected_for_abandoned_session(self):
+        self._send_messages(2)
+        self.client.patch(f"{SESSIONS_URL}{self.session_id}/", {"status": "abandoned"}, format="json")
+        r = self._post_summary()
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_summary_allowed_for_completed_session(self):
+        self._send_messages(2)
+        self.client.patch(f"{SESSIONS_URL}{self.session_id}/", {"status": "completed"}, format="json")
+        r = self._post_summary()
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_summary_not_accessible_for_another_patients_session(self):
+        self._send_messages(2)
+        other_payload = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other_payload, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        with patch("patient.views.generate_session_summary", return_value=_MOCK_SUMMARY):
+            r = self.client.post(self.summary_url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_summary_regenerates_on_second_call(self):
+        self._send_messages(2)
+        self._post_summary()
+        new_summary = {**_MOCK_SUMMARY, "chief_complaint": "Updated complaint."}
+        self._post_summary(mock_summary=new_summary)
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["summary"]["chief_complaint"], "Updated complaint.")
+
+    def test_openai_failure_returns_503(self):
+        self._send_messages(2)
+        with patch("patient.views.generate_session_summary", side_effect=Exception("OpenAI down")):
+            r = self.client.post(self.summary_url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)

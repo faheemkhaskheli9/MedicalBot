@@ -45,6 +45,7 @@ class ChatSession(models.Model):
     risk_level = models.CharField(max_length=20, choices=RISK_LEVELS, null=True, blank=True)
     current_agent = models.CharField(max_length=100, null=True, blank=True)
     session_metadata = models.JSONField(default=dict, blank=True)
+    summary = models.JSONField(null=True, blank=True)
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
 
