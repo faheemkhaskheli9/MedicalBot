@@ -21,6 +21,14 @@ VALID_PAYLOAD = {
     "password_confirm": "SecurePass123!",
 }
 
+_MOCK_GRAPH_RESULT = {
+    "bot_response": "I understand. Can you tell me more about your symptoms?",
+    "agent_used": "intake_agent",
+    "risk_level": None,
+}
+_NON_EMERGENCY = {"is_emergency": False, "symptoms_detected": [], "confidence": 0.0}
+_SYMPTOM_INTENT = {"intent": "symptom_check", "confidence": 0.9}
+
 
 class PatientRegistrationTests(APITestCase):
     def test_register_success(self):
@@ -239,6 +247,18 @@ class ChatMessageTests(APITestCase):
         self.session_id = session_r.data["id"]
         self.messages_url = f"{SESSIONS_URL}{self.session_id}/messages/"
 
+        self._p_emergency = patch("patient.views.detect_emergency", return_value=_NON_EMERGENCY)
+        self._p_intent = patch("patient.views.detect_intent", return_value=_SYMPTOM_INTENT)
+        self._p_graph = patch("patient.views.run_triage_graph", return_value=_MOCK_GRAPH_RESULT)
+        self._p_emergency.start()
+        self._p_intent.start()
+        self._p_graph.start()
+
+    def tearDown(self):
+        self._p_emergency.stop()
+        self._p_intent.stop()
+        self._p_graph.stop()
+
     def test_send_message_returns_201(self):
         r = self.client.post(self.messages_url, {"content": "I have a headache"}, format="json")
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
@@ -291,10 +311,10 @@ class MessageIntentTests(APITestCase):
 
     def _post_message(self, content, intent="symptom_check", confidence=0.95):
         mock_result = {"intent": intent, "confidence": confidence}
-        non_emergency = {"is_emergency": False, "symptoms_detected": [], "confidence": 0.0}
-        with patch("patient.views.detect_emergency", return_value=non_emergency):
-            with patch("patient.views.detect_intent", return_value=mock_result):
-                return self.client.post(self.messages_url, {"content": content}, format="json")
+        with patch("patient.views.detect_emergency", return_value=_NON_EMERGENCY), \
+             patch("patient.views.detect_intent", return_value=mock_result), \
+             patch("patient.views.run_triage_graph", return_value=_MOCK_GRAPH_RESULT):
+            return self.client.post(self.messages_url, {"content": content}, format="json")
 
     def test_patient_message_metadata_contains_intent(self):
         r = self._post_message("I have a headache")
@@ -332,21 +352,17 @@ class MessageIntentTests(APITestCase):
         self.assertEqual(r.data["patient_message"]["metadata"]["intent"], "emergency")
 
     def test_openai_failure_falls_back_to_unknown(self):
-        with patch("patient.views.detect_intent", return_value={"intent": "unknown", "confidence": 0.0}):
-            r = self.client.post(self.messages_url, {"content": "gibberish xyz"}, format="json")
+        r = self._post_message("gibberish xyz", intent="unknown", confidence=0.0)
         self.assertEqual(r.status_code, status.HTTP_201_CREATED)
         self.assertEqual(r.data["patient_message"]["metadata"]["intent"], "unknown")
 
     def test_unsupported_intent_remapped_to_unknown(self):
-        with patch("patient.views.detect_intent", return_value={"intent": "unknown", "confidence": 0.0}):
-            r = self.client.post(self.messages_url, {"content": "random text"}, format="json")
+        r = self._post_message("random text", intent="unknown", confidence=0.0)
         self.assertEqual(r.data["patient_message"]["metadata"]["intent"], "unknown")
 
     def test_all_supported_intents_accepted(self):
         for intent in SUPPORTED_INTENTS:
-            mock_result = {"intent": intent, "confidence": 0.8}
-            with patch("patient.views.detect_intent", return_value=mock_result):
-                r = self.client.post(self.messages_url, {"content": "test message"}, format="json")
+            r = self._post_message("test message", intent=intent, confidence=0.8)
             self.assertEqual(r.status_code, status.HTTP_201_CREATED)
             self.assertEqual(r.data["patient_message"]["metadata"]["intent"], intent)
 
@@ -378,7 +394,8 @@ class EmergencyTriageTests(APITestCase):
 
     def _post_normal(self, content="I have a mild headache"):
         with patch("patient.views.detect_emergency", return_value=self._NORMAL_RESULT), \
-             patch("patient.views.detect_intent", return_value=self._NORMAL_INTENT):
+             patch("patient.views.detect_intent", return_value=self._NORMAL_INTENT), \
+             patch("patient.views.run_triage_graph", return_value=_MOCK_GRAPH_RESULT):
             return self.client.post(self.messages_url, {"content": content}, format="json")
 
     def test_emergency_returns_201(self):
@@ -490,3 +507,156 @@ class EmergencyTriageTests(APITestCase):
             for msg in examples:
                 r = self.client.post(self.messages_url, {"content": msg}, format="json")
                 self.assertTrue(r.data.get("emergency"), f"Expected emergency=True for: {msg}")
+
+
+class TriageOrchestatorTests(APITestCase):
+    """Tests for LangGraph triage orchestrator integration."""
+
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        session_r = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = session_r.data["id"]
+        self.messages_url = f"{SESSIONS_URL}{self.session_id}/messages/"
+
+    def _post(self, content, intent="symptom_check", graph_result=None):
+        if graph_result is None:
+            graph_result = _MOCK_GRAPH_RESULT
+        with patch("patient.views.detect_emergency", return_value=_NON_EMERGENCY), \
+             patch("patient.views.detect_intent", return_value={"intent": intent, "confidence": 0.9}), \
+             patch("patient.views.run_triage_graph", return_value=graph_result) as mock_graph:
+            response = self.client.post(self.messages_url, {"content": content}, format="json")
+            return response, mock_graph
+
+    def test_graph_is_called_for_non_emergency(self):
+        _, mock_graph = self._post("I have a headache")
+        mock_graph.assert_called_once()
+
+    def test_graph_receives_correct_intent(self):
+        _, mock_graph = self._post("book appointment", intent="appointment_request")
+        call_kwargs = mock_graph.call_args.kwargs
+        self.assertEqual(call_kwargs["intent"], "appointment_request")
+
+    def test_graph_receives_patient_name(self):
+        _, mock_graph = self._post("my knee hurts")
+        call_kwargs = mock_graph.call_args.kwargs
+        self.assertEqual(call_kwargs["patient_name"], "Ali Khan")
+
+    def test_graph_receives_conversation_history(self):
+        _, mock_graph = self._post("first message")
+        call_kwargs = mock_graph.call_args.kwargs
+        self.assertIsInstance(call_kwargs["conversation_history"], list)
+        self.assertTrue(len(call_kwargs["conversation_history"]) >= 1)
+
+    def test_bot_response_comes_from_graph(self):
+        custom_result = {**_MOCK_GRAPH_RESULT, "bot_response": "Custom graph response."}
+        response, _ = self._post("my knee hurts", graph_result=custom_result)
+        self.assertEqual(response.data["bot_message"]["content"], "Custom graph response.")
+
+    def test_agent_name_stored_from_graph(self):
+        custom_result = {**_MOCK_GRAPH_RESULT, "agent_used": "appointment_agent"}
+        response, _ = self._post("book appointment", intent="appointment_request", graph_result=custom_result)
+        self.assertEqual(response.data["bot_message"]["agent_name"], "appointment_agent")
+
+    def test_session_metadata_stores_last_agent(self):
+        self._post("my knee hurts")
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertIn("last_agent", detail.data["session_metadata"])
+        self.assertEqual(detail.data["session_metadata"]["last_agent"], "intake_agent")
+
+    def test_graph_risk_level_updates_session(self):
+        urgent_result = {**_MOCK_GRAPH_RESULT, "risk_level": "urgent"}
+        self._post("severe pain", graph_result=urgent_result)
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["risk_level"], "urgent")
+
+    def test_graph_none_risk_level_does_not_overwrite_session(self):
+        # First message sets risk_level via graph
+        urgent_result = {**_MOCK_GRAPH_RESULT, "risk_level": "urgent"}
+        self._post("severe pain", graph_result=urgent_result)
+        # Second message returns None risk_level — should NOT reset to None
+        self._post("a bit better", graph_result=_MOCK_GRAPH_RESULT)
+        detail = self.client.get(f"{SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(detail.data["risk_level"], "urgent")
+
+    def test_graph_not_called_for_emergency(self):
+        emergency_result = {
+            "is_emergency": True,
+            "symptoms_detected": ["chest pain"],
+            "confidence": 0.99,
+        }
+        with patch("patient.views.detect_emergency", return_value=emergency_result), \
+             patch("patient.views.run_triage_graph") as mock_graph:
+            self.client.post(self.messages_url, {"content": "chest pain"}, format="json")
+        mock_graph.assert_not_called()
+
+    def test_history_includes_prior_bot_messages(self):
+        # Send first message (creates patient + bot messages)
+        self._post("first symptom")
+        # Send second message and capture what graph receives
+        _, mock_graph = self._post("more details")
+        history = mock_graph.call_args.kwargs["conversation_history"]
+        # Should have at least 3 messages: bot reply from first turn + patient + current patient
+        self.assertGreaterEqual(len(history), 3)
+
+    def test_graph_routing_symptom_check(self):
+        from patient.agents.nodes import route_by_intent
+        from patient.agents.state import TriageState
+
+        state: TriageState = {
+            "conversation_history": [],
+            "intent": "symptom_check",
+            "patient_name": "Test",
+            "session_metadata": {},
+            "bot_response": "",
+            "agent_used": "",
+            "risk_level": None,
+        }
+        self.assertEqual(route_by_intent(state), "intake")
+
+    def test_graph_routing_appointment(self):
+        from patient.agents.nodes import route_by_intent
+        from patient.agents.state import TriageState
+
+        state: TriageState = {
+            "conversation_history": [],
+            "intent": "appointment_request",
+            "patient_name": "Test",
+            "session_metadata": {},
+            "bot_response": "",
+            "agent_used": "",
+            "risk_level": None,
+        }
+        self.assertEqual(route_by_intent(state), "appointment")
+
+    def test_graph_routing_medication(self):
+        from patient.agents.nodes import route_by_intent
+        from patient.agents.state import TriageState
+
+        state: TriageState = {
+            "conversation_history": [],
+            "intent": "medication_question",
+            "patient_name": "Test",
+            "session_metadata": {},
+            "bot_response": "",
+            "agent_used": "",
+            "risk_level": None,
+        }
+        self.assertEqual(route_by_intent(state), "medication")
+
+    def test_graph_routing_general_intents(self):
+        from patient.agents.nodes import route_by_intent
+        from patient.agents.state import TriageState
+
+        for intent in ("lab_report_question", "billing_question", "hospital_info"):
+            state: TriageState = {
+                "conversation_history": [],
+                "intent": intent,
+                "patient_name": "Test",
+                "session_metadata": {},
+                "bot_response": "",
+                "agent_used": "",
+                "risk_level": None,
+            }
+            self.assertEqual(route_by_intent(state), "general", f"Failed for intent: {intent}")

@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .agents.runner import run_triage_graph
 from .emergency_detection import EMERGENCY_GUIDANCE, detect_emergency
 from .intent_detection import detect_intent
 from .models import ChatSession, EmergencyEvent, Message, Patient
@@ -34,24 +35,6 @@ def profile_page(request):
 def chat_page(request):
     return render(request, "patient/chat.html")
 
-
-def _placeholder_bot_reply(session, patient_message: str) -> str:
-    """Placeholder bot response until the LangGraph orchestrator is wired in."""
-    message_count = session.messages.filter(sender="patient").count()
-    name = session.patient.name.split()[0]
-    if message_count == 1:
-        return (
-            f"Hello {name}, I'm MedicalBot — your AI medical assistant. "
-            "I'm here to help collect information about your health concern before your doctor visit. "
-            "Could you please tell me more about your main symptom or concern? "
-            "For example: what is bothering you, how long has it been happening, and how severe is it?\n\n"
-            "_This is not a replacement for a doctor. Please consult a qualified healthcare professional._"
-        )
-    return (
-        "Thank you for sharing that. I've recorded your message. "
-        "Please continue describing your symptoms and I'll collect the information for your doctor.\n\n"
-        "_This is not a replacement for a doctor. Please consult a qualified healthcare professional._"
-    )
 
 
 class PatientRegisterView(APIView):
@@ -229,15 +212,38 @@ class ChatMessageCreateView(APIView):
             metadata=intent_result,
         )
 
+        # Build full conversation history for the graph (includes the new patient message)
+        history = [
+            {
+                "role": "user" if msg.sender == "patient" else "assistant",
+                "content": msg.content,
+            }
+            for msg in session.messages.order_by("created_at")
+        ]
+
+        graph_result = run_triage_graph(
+            conversation_history=history,
+            intent=intent_result["intent"],
+            patient_name=session.patient.name,
+            session_metadata=session.session_metadata,
+        )
+
         session.session_metadata = {
             **session.session_metadata,
             "last_intent": intent_result["intent"],
             "last_confidence": intent_result["confidence"],
+            "last_agent": graph_result["agent_used"],
         }
+        if graph_result["risk_level"]:
+            session.risk_level = graph_result["risk_level"]
         session.save()
 
-        bot_reply_text = _placeholder_bot_reply(session, content)
-        bot_msg = Message.objects.create(session=session, sender="bot", content=bot_reply_text, agent_name="placeholder")
+        bot_msg = Message.objects.create(
+            session=session,
+            sender="bot",
+            content=graph_result["bot_response"],
+            agent_name=graph_result["agent_used"],
+        )
 
         return Response(
             {
