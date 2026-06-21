@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Doctor, DoctorNote, SPECIALIZATION_CHOICES
+from .models import Doctor, DoctorNote, Prescription, SPECIALIZATION_CHOICES
 
 
 class DoctorRegisterSerializer(serializers.Serializer):
@@ -81,6 +81,25 @@ class DoctorNoteSerializer(serializers.ModelSerializer):
         model = DoctorNote
         fields = ["id", "doctor_name", "note", "created_at", "updated_at"]
         read_only_fields = ["id", "doctor_name", "created_at", "updated_at"]
+
+
+class PrescriptionSerializer(serializers.ModelSerializer):
+    doctor_name = serializers.CharField(source="doctor.name", read_only=True)
+    session_id = serializers.UUIDField(source="session.id", read_only=True)
+
+    class Meta:
+        model = Prescription
+        fields = [
+            "id", "doctor_name", "session_id", "medications",
+            "instructions", "follow_up_date", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "doctor_name", "session_id", "created_at", "updated_at"]
+        extra_kwargs = {"medications": {"required": True}}
+
+    def validate_medications(self, value):
+        if not isinstance(value, list) or len(value) == 0:
+            raise serializers.ValidationError("medications must be a non-empty list.")
+        return value
 
 
 class DoctorAppointmentSerializer(serializers.Serializer):

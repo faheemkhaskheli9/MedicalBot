@@ -349,6 +349,42 @@ class MedicalHistoryView(APIView):
         return Response(serializer.data)
 
 
+class PatientPrescriptionListView(APIView):
+    """Patient reads all prescriptions across their sessions."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            patient = Patient.objects.get(pk=request.user.pk)
+        except Patient.DoesNotExist:
+            return Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        from doctor.models import Prescription
+        from doctor.serializers import PrescriptionSerializer
+        prescriptions = Prescription.objects.filter(
+            session__patient=patient
+        ).select_related("doctor", "session").order_by("-created_at")
+        return Response(PrescriptionSerializer(prescriptions, many=True).data)
+
+
+class PatientSessionPrescriptionListView(APIView):
+    """Patient reads prescriptions for a specific session."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, session_id):
+        try:
+            patient = Patient.objects.get(pk=request.user.pk)
+        except Patient.DoesNotExist:
+            return Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            session = ChatSession.objects.get(id=session_id, patient=patient)
+        except ChatSession.DoesNotExist:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+        from doctor.models import Prescription
+        from doctor.serializers import PrescriptionSerializer
+        prescriptions = Prescription.objects.filter(session=session).select_related("doctor")
+        return Response(PrescriptionSerializer(prescriptions, many=True).data)
+
+
 class AppointmentListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
