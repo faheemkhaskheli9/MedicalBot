@@ -83,6 +83,24 @@ class DoctorNoteSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "doctor_name", "created_at", "updated_at"]
 
 
+class DoctorAppointmentSerializer(serializers.Serializer):
+    """Doctor-facing view of an appointment."""
+    id = serializers.UUIDField(read_only=True)
+    patient_name = serializers.SerializerMethodField()
+    patient_age = serializers.SerializerMethodField()
+    scheduled_at = serializers.DateTimeField(read_only=True)
+    reason = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    doctor_notes = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+
+    def get_patient_name(self, obj):
+        return obj.patient.name
+
+    def get_patient_age(self, obj):
+        return obj.patient.age
+
+
 class PatientSessionListSerializer(serializers.Serializer):
     """Lightweight view of a patient session for the doctor portal."""
     session_id = serializers.UUIDField(source="id")

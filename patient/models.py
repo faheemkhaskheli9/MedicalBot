@@ -111,6 +111,38 @@ class MedicalHistory(models.Model):
         return f"Medical history for {self.patient.name}"
 
 
+class Appointment(models.Model):
+    APPOINTMENT_STATUS = [
+        ("pending", "Pending"),
+        ("confirmed", "Confirmed"),
+        ("cancelled", "Cancelled"),
+        ("completed", "Completed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="appointments")
+    doctor = models.ForeignKey(
+        "doctor.Doctor", on_delete=models.CASCADE, related_name="appointments"
+    )
+    session = models.ForeignKey(
+        ChatSession, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="appointments",
+    )
+    scheduled_at = models.DateTimeField()
+    reason = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=20, choices=APPOINTMENT_STATUS, default="pending")
+    doctor_notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "appointments"
+        ordering = ["scheduled_at"]
+
+    def __str__(self):
+        return f"Appointment [{self.patient.name} → Dr. {self.doctor.name}] on {self.scheduled_at:%Y-%m-%d %H:%M} ({self.status})"
+
+
 class EmergencyEvent(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name="emergency_events")
