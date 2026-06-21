@@ -97,16 +97,24 @@ class EmergencyEventSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "trigger_message", "symptoms_detected", "guidance_given", "created_at"]
 
 
+class AssignedDoctorSerializer(serializers.Serializer):
+    id = serializers.IntegerField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    specialization = serializers.CharField(read_only=True)
+
+
 class ChatSessionSerializer(serializers.ModelSerializer):
     messages = MessageSerializer(many=True, read_only=True)
     emergency_events = EmergencyEventSerializer(many=True, read_only=True)
     message_count = serializers.SerializerMethodField()
+    assigned_doctor = AssignedDoctorSerializer(read_only=True)
 
     class Meta:
         model = ChatSession
         fields = [
             "id", "status", "risk_level", "current_agent", "session_metadata",
-            "summary", "started_at", "ended_at", "message_count", "messages", "emergency_events",
+            "summary", "started_at", "ended_at", "message_count",
+            "assigned_doctor", "messages", "emergency_events",
         ]
         read_only_fields = fields
 
@@ -117,10 +125,14 @@ class ChatSessionSerializer(serializers.ModelSerializer):
 class ChatSessionListSerializer(serializers.ModelSerializer):
     message_count = serializers.SerializerMethodField()
     last_message = serializers.SerializerMethodField()
+    assigned_doctor = AssignedDoctorSerializer(read_only=True)
 
     class Meta:
         model = ChatSession
-        fields = ["id", "status", "risk_level", "session_metadata", "started_at", "ended_at", "message_count", "last_message"]
+        fields = [
+            "id", "status", "risk_level", "session_metadata",
+            "started_at", "ended_at", "message_count", "last_message", "assigned_doctor",
+        ]
         read_only_fields = fields
 
     def get_message_count(self, obj):

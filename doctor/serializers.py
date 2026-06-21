@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Doctor, SPECIALIZATION_CHOICES
+from .models import Doctor, DoctorNote, SPECIALIZATION_CHOICES
 
 
 class DoctorRegisterSerializer(serializers.Serializer):
@@ -74,6 +74,15 @@ class DoctorProfileSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class DoctorNoteSerializer(serializers.ModelSerializer):
+    doctor_name = serializers.CharField(source="doctor.name", read_only=True)
+
+    class Meta:
+        model = DoctorNote
+        fields = ["id", "doctor_name", "note", "created_at", "updated_at"]
+        read_only_fields = ["id", "doctor_name", "created_at", "updated_at"]
+
+
 class PatientSessionListSerializer(serializers.Serializer):
     """Lightweight view of a patient session for the doctor portal."""
     session_id = serializers.UUIDField(source="id")
@@ -86,6 +95,7 @@ class PatientSessionListSerializer(serializers.Serializer):
     message_count = serializers.SerializerMethodField()
     has_summary = serializers.SerializerMethodField()
     last_intent = serializers.SerializerMethodField()
+    assigned_doctor = serializers.SerializerMethodField()
 
     def get_patient_name(self, obj):
         return obj.patient.name
@@ -102,6 +112,11 @@ class PatientSessionListSerializer(serializers.Serializer):
     def get_last_intent(self, obj):
         return obj.session_metadata.get("last_intent")
 
+    def get_assigned_doctor(self, obj):
+        if obj.assigned_doctor:
+            return {"id": obj.assigned_doctor.pk, "name": obj.assigned_doctor.name}
+        return None
+
 
 class PatientSessionDetailSerializer(serializers.Serializer):
     """Full session detail for the doctor portal."""
@@ -116,6 +131,7 @@ class PatientSessionDetailSerializer(serializers.Serializer):
     ended_at = serializers.DateTimeField(allow_null=True)
     session_metadata = serializers.DictField()
     summary = serializers.DictField(allow_null=True)
+    assigned_doctor = serializers.SerializerMethodField()
     messages = serializers.SerializerMethodField()
 
     def get_patient_name(self, obj):
@@ -129,6 +145,15 @@ class PatientSessionDetailSerializer(serializers.Serializer):
 
     def get_patient_phone(self, obj):
         return obj.patient.phone
+
+    def get_assigned_doctor(self, obj):
+        if obj.assigned_doctor:
+            return {
+                "id": obj.assigned_doctor.pk,
+                "name": obj.assigned_doctor.name,
+                "specialization": obj.assigned_doctor.specialization,
+            }
+        return None
 
     def get_messages(self, obj):
         return [

@@ -2,10 +2,13 @@ from django.urls import path
 
 from .views import (
     DoctorLoginView,
+    DoctorNoteDetailView,
+    DoctorNoteListCreateView,
     DoctorProfileView,
     DoctorRegisterView,
     PatientSessionDetailForDoctorView,
     PatientSessionListView,
+    SessionAssignView,
 )
 
 urlpatterns = [
@@ -14,4 +17,7 @@ urlpatterns = [
     path("profile/", DoctorProfileView.as_view(), name="doctor-profile"),
     path("patients/sessions/", PatientSessionListView.as_view(), name="doctor-patient-sessions"),
     path("patients/sessions/<uuid:session_id>/", PatientSessionDetailForDoctorView.as_view(), name="doctor-patient-session-detail"),
+    path("patients/sessions/<uuid:session_id>/assign/", SessionAssignView.as_view(), name="doctor-session-assign"),
+    path("patients/sessions/<uuid:session_id>/notes/", DoctorNoteListCreateView.as_view(), name="doctor-session-notes"),
+    path("patients/sessions/<uuid:session_id>/notes/<uuid:note_id>/", DoctorNoteDetailView.as_view(), name="doctor-session-note-detail"),
 ]

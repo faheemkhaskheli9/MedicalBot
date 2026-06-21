@@ -13,6 +13,12 @@ DOCTOR_SESSIONS_URL = "/api/doctor/patients/sessions/"
 PATIENT_REGISTER_URL = "/api/patient/register/"
 PATIENT_SESSIONS_URL = "/api/patient/chat/sessions/"
 
+def _notes_url(session_id):
+    return f"/api/doctor/patients/sessions/{session_id}/notes/"
+
+def _note_detail_url(session_id, note_id):
+    return f"/api/doctor/patients/sessions/{session_id}/notes/{note_id}/"
+
 VALID_DOCTOR_PAYLOAD = {
     "name": "Dr. Sara Ahmed",
     "email": "sara.ahmed@hospital.com",
@@ -241,3 +247,226 @@ class DoctorPatientSessionTests(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
         r = self.client.get(f"{DOCTOR_SESSIONS_URL}00000000-0000-0000-0000-000000000000/")
         self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class DoctorNoteTests(APITestCase):
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+
+        second_doctor_payload = {
+            **VALID_DOCTOR_PAYLOAD,
+            "email": "other.doc@hospital.com",
+            "license_number": "LIC-999",
+        }
+        dr2 = self.client.post(DOCTOR_REGISTER_URL, second_doctor_payload, format="json")
+        self.other_doctor_token = dr2.data["tokens"]["access"]
+
+        pr = self.client.post(PATIENT_REGISTER_URL, VALID_PATIENT_PAYLOAD, format="json")
+        self.patient_token = pr.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+        sr = self.client.post(PATIENT_SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+
+    def _auth_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+
+    def _auth_other_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.other_doctor_token}")
+
+    def _auth_patient(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+
+    # --- list / create ---
+
+    def test_create_note_success(self):
+        self._auth_doctor()
+        r = self.client.post(_notes_url(self.session_id), {"note": "Patient seems anxious."}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.data["note"], "Patient seems anxious.")
+        self.assertIn("id", r.data)
+        self.assertIn("doctor_name", r.data)
+
+    def test_list_notes_success(self):
+        self._auth_doctor()
+        self.client.post(_notes_url(self.session_id), {"note": "First note."}, format="json")
+        self.client.post(_notes_url(self.session_id), {"note": "Second note."}, format="json")
+        r = self.client.get(_notes_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 2)
+
+    def test_notes_require_auth(self):
+        self.client.credentials()
+        r = self.client.get(_notes_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_cannot_create_note(self):
+        self._auth_patient()
+        r = self.client.post(_notes_url(self.session_id), {"note": "Self note."}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_create_note_empty_content_rejected(self):
+        self._auth_doctor()
+        r = self.client.post(_notes_url(self.session_id), {"note": ""}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_note_unknown_session_returns_404(self):
+        self._auth_doctor()
+        r = self.client.post(
+            _notes_url("00000000-0000-0000-0000-000000000000"),
+            {"note": "Some note."},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    # --- detail ---
+
+    def test_get_note_detail(self):
+        self._auth_doctor()
+        create_r = self.client.post(_notes_url(self.session_id), {"note": "Detail note."}, format="json")
+        note_id = create_r.data["id"]
+        r = self.client.get(_note_detail_url(self.session_id, note_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["note"], "Detail note.")
+
+    def test_delete_own_note(self):
+        self._auth_doctor()
+        create_r = self.client.post(_notes_url(self.session_id), {"note": "To delete."}, format="json")
+        note_id = create_r.data["id"]
+        r = self.client.delete(_note_detail_url(self.session_id, note_id))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+        # confirm it is gone
+        r2 = self.client.get(_note_detail_url(self.session_id, note_id))
+        self.assertEqual(r2.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_other_doctor_cannot_delete_note(self):
+        self._auth_doctor()
+        create_r = self.client.post(_notes_url(self.session_id), {"note": "Protected note."}, format="json")
+        note_id = create_r.data["id"]
+
+        self._auth_other_doctor()
+        r = self.client.delete(_note_detail_url(self.session_id, note_id))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_other_doctor_can_read_note(self):
+        self._auth_doctor()
+        create_r = self.client.post(_notes_url(self.session_id), {"note": "Readable note."}, format="json")
+        note_id = create_r.data["id"]
+
+        self._auth_other_doctor()
+        r = self.client.get(_note_detail_url(self.session_id, note_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_note_detail_unknown_note_returns_404(self):
+        self._auth_doctor()
+        r = self.client.get(_note_detail_url(self.session_id, "00000000-0000-0000-0000-000000000000"))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+def _assign_url(session_id):
+    return f"/api/doctor/patients/sessions/{session_id}/assign/"
+
+
+class SessionAssignTests(APITestCase):
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+
+        second_doctor_payload = {
+            **VALID_DOCTOR_PAYLOAD,
+            "email": "other.doc@hospital.com",
+            "license_number": "LIC-999",
+        }
+        dr2 = self.client.post(DOCTOR_REGISTER_URL, second_doctor_payload, format="json")
+        self.other_doctor_token = dr2.data["tokens"]["access"]
+
+        pr = self.client.post(PATIENT_REGISTER_URL, VALID_PATIENT_PAYLOAD, format="json")
+        self.patient_token = pr.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+        sr = self.client.post(PATIENT_SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+
+    def _auth_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+
+    def _auth_other_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.other_doctor_token}")
+
+    def _auth_patient(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+
+    def test_doctor_can_assign_self_to_session(self):
+        self._auth_doctor()
+        r = self.client.post(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("assigned_doctor", r.data)
+        self.assertEqual(r.data["assigned_doctor"]["name"], VALID_DOCTOR_PAYLOAD["name"])
+
+    def test_assignment_persists_in_session_detail(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        r = self.client.get(f"{DOCTOR_SESSIONS_URL}{self.session_id}/")
+        self.assertIsNotNone(r.data["assigned_doctor"])
+        self.assertEqual(r.data["assigned_doctor"]["name"], VALID_DOCTOR_PAYLOAD["name"])
+
+    def test_assignment_visible_in_session_list(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        r = self.client.get(DOCTOR_SESSIONS_URL)
+        self.assertIsNotNone(r.data[0]["assigned_doctor"])
+
+    def test_assign_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_cannot_assign_session(self):
+        self._auth_patient()
+        r = self.client.post(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_second_doctor_cannot_overwrite_assignment(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        self._auth_other_doctor()
+        r = self.client.post(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+
+    def test_doctor_can_reassign_own_session(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        r = self.client.post(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+    def test_doctor_can_unassign_self(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        r = self.client.delete(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_204_NO_CONTENT)
+
+    def test_unassign_clears_doctor_from_session(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        self.client.delete(_assign_url(self.session_id))
+        r = self.client.get(f"{DOCTOR_SESSIONS_URL}{self.session_id}/")
+        self.assertIsNone(r.data["assigned_doctor"])
+
+    def test_other_doctor_cannot_unassign(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        self._auth_other_doctor()
+        r = self.client.delete(_assign_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_assign_unknown_session_returns_404(self):
+        self._auth_doctor()
+        r = self.client.post(_assign_url("00000000-0000-0000-0000-000000000000"))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_patient_session_detail_shows_assigned_doctor(self):
+        self._auth_doctor()
+        self.client.post(_assign_url(self.session_id))
+        self._auth_patient()
+        r = self.client.get(f"{PATIENT_SESSIONS_URL}{self.session_id}/")
+        self.assertIsNotNone(r.data["assigned_doctor"])
+        self.assertEqual(r.data["assigned_doctor"]["name"], VALID_DOCTOR_PAYLOAD["name"])
