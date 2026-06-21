@@ -377,9 +377,9 @@ class EmergencyTriageTests(APITestCase):
             return self.client.post(self.messages_url, {"content": content}, format="json")
 
     def _post_normal(self, content="I have a mild headache"):
-        with patch("patient.views.detect_emergency", return_value=self._NORMAL_RESULT):
-            with patch("patient.views.detect_intent", return_value=self._NORMAL_INTENT):
-                return self.client.post(self.messages_url, {"content": content}, format="json")
+        with patch("patient.views.detect_emergency", return_value=self._NORMAL_RESULT), \
+             patch("patient.views.detect_intent", return_value=self._NORMAL_INTENT):
+            return self.client.post(self.messages_url, {"content": content}, format="json")
 
     def test_emergency_returns_201(self):
         r = self._post_emergency()
@@ -486,7 +486,7 @@ class EmergencyTriageTests(APITestCase):
             "Pregnancy emergency",
             "High fever in infant",
         ]
-        for msg in examples:
-            with patch("patient.views.detect_emergency", return_value=self._EMERGENCY_RESULT):
+        with patch("patient.views.detect_emergency", return_value=self._EMERGENCY_RESULT):
+            for msg in examples:
                 r = self.client.post(self.messages_url, {"content": msg}, format="json")
-            self.assertTrue(r.data.get("emergency"), f"Expected emergency=True for: {msg}")
+                self.assertTrue(r.data.get("emergency"), f"Expected emergency=True for: {msg}")
