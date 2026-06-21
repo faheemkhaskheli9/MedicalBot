@@ -41,6 +41,10 @@ class ChatSession(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     patient = models.ForeignKey(Patient, on_delete=models.CASCADE, related_name="chat_sessions")
+    assigned_doctor = models.ForeignKey(
+        "doctor.Doctor", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="assigned_sessions",
+    )
     status = models.CharField(max_length=20, choices=SESSION_STATUS, default="active")
     risk_level = models.CharField(max_length=20, choices=RISK_LEVELS, null=True, blank=True)
     current_agent = models.CharField(max_length=100, null=True, blank=True)
