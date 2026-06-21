@@ -95,7 +95,7 @@ class ChatSessionSerializer(serializers.ModelSerializer):
         model = ChatSession
         fields = [
             "id", "status", "risk_level", "current_agent", "session_metadata",
-            "started_at", "ended_at", "message_count", "messages", "emergency_events",
+            "summary", "started_at", "ended_at", "message_count", "messages", "emergency_events",
         ]
         read_only_fields = fields
 

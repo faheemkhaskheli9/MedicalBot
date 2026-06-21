@@ -4,6 +4,7 @@ from .views import (
     ChatMessageCreateView,
     ChatSessionDetailView,
     ChatSessionListCreateView,
+    ChatSessionSummaryView,
     PatientLoginView,
     PatientLogoutView,
     PatientProfileView,
@@ -18,4 +19,5 @@ urlpatterns = [
     path("chat/sessions/", ChatSessionListCreateView.as_view(), name="chat-sessions"),
     path("chat/sessions/<uuid:session_id>/", ChatSessionDetailView.as_view(), name="chat-session-detail"),
     path("chat/sessions/<uuid:session_id>/messages/", ChatMessageCreateView.as_view(), name="chat-messages"),
+    path("chat/sessions/<uuid:session_id>/summary/", ChatSessionSummaryView.as_view(), name="chat-session-summary"),
 ]

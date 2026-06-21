@@ -10,6 +10,7 @@ from .agents.runner import run_triage_graph
 from .emergency_detection import EMERGENCY_GUIDANCE, detect_emergency
 from .intent_detection import detect_intent
 from .models import ChatSession, EmergencyEvent, Message, Patient
+from .summary import generate_session_summary
 from .serializers import (
     ChatSessionListSerializer,
     ChatSessionSerializer,
@@ -253,6 +254,60 @@ class ChatMessageCreateView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class ChatSessionSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            patient = Patient.objects.get(pk=request.user.pk)
+        except Patient.DoesNotExist:
+            return Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            session = ChatSession.objects.get(id=session_id, patient=patient)
+        except ChatSession.DoesNotExist:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if session.status == "abandoned":
+            return Response(
+                {"error": "Cannot summarise an abandoned session."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        patient_messages = session.messages.filter(sender="patient")
+        if patient_messages.count() < 2:
+            return Response(
+                {"error": "At least 2 patient messages are required to generate a summary."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        history = [
+            {
+                "role": "user" if msg.sender == "patient" else "assistant",
+                "content": msg.content,
+            }
+            for msg in session.messages.order_by("created_at")
+        ]
+
+        try:
+            summary = generate_session_summary(
+                conversation_history=history,
+                patient_name=patient.name,
+                patient_age=patient.age,
+            )
+        except Exception:
+            return Response(
+                {"error": "Failed to generate summary. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        session.summary = summary
+        if summary.get("risk_level") in ("routine", "urgent", "emergency"):
+            session.risk_level = summary["risk_level"]
+        session.save(update_fields=["summary", "risk_level"])
+
+        return Response({"summary": summary}, status=status.HTTP_200_OK)
 
 
 class PatientLogoutView(APIView):
