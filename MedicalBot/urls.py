@@ -32,4 +32,5 @@ urlpatterns = [
     # API
     path("api/", api_root, name="api-root"),
     path("api/patient/", include("patient.urls")),
+    path("api/doctor/", include("doctor.urls")),
 ]
