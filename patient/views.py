@@ -187,17 +187,19 @@ class ChatMessageCreateView(APIView):
 
         emergency_result = detect_emergency(content)
         if emergency_result["is_emergency"]:
+            symptoms = emergency_result["symptoms_detected"]
+            emergency_meta = {"emergency": True, "symptoms_detected": symptoms}
             patient_msg = Message.objects.create(
                 session=session,
                 sender="patient",
                 content=content,
-                metadata={"emergency": True, "symptoms_detected": emergency_result["symptoms_detected"]},
+                metadata=emergency_meta,
             )
             EmergencyEvent.objects.create(
                 session=session,
                 patient=patient,
                 trigger_message=content,
-                symptoms_detected=emergency_result["symptoms_detected"],
+                symptoms_detected=symptoms,
                 guidance_given=EMERGENCY_GUIDANCE,
             )
             session.risk_level = "emergency"
@@ -207,7 +209,7 @@ class ChatMessageCreateView(APIView):
                 sender="bot",
                 content=EMERGENCY_GUIDANCE,
                 agent_name="emergency_triage",
-                metadata={"emergency": True, "symptoms_detected": emergency_result["symptoms_detected"]},
+                metadata=emergency_meta,
             )
             return Response(
                 {

@@ -1,6 +1,7 @@
 import json
 import logging
-import os
+
+from .openai_client import get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +35,7 @@ def detect_intent(message_content: str) -> dict:
     Falls back to {"intent": "unknown", "confidence": 0.0} on any error.
     """
     try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},

@@ -83,7 +83,7 @@ class EmergencyEventSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmergencyEvent
         fields = ["id", "trigger_message", "symptoms_detected", "guidance_given", "created_at"]
-        read_only_fields = fields
+        read_only_fields = ["id", "trigger_message", "symptoms_detected", "guidance_given", "created_at"]
 
 
 class ChatSessionSerializer(serializers.ModelSerializer):
