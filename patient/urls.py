@@ -1,6 +1,8 @@
 from django.urls import path
 
 from .views import (
+    AppointmentDetailView,
+    AppointmentListCreateView,
     ChatMessageCreateView,
     ChatSessionDetailView,
     ChatSessionListCreateView,
@@ -22,4 +24,6 @@ urlpatterns = [
     path("chat/sessions/<uuid:session_id>/messages/", ChatMessageCreateView.as_view(), name="chat-messages"),
     path("chat/sessions/<uuid:session_id>/summary/", ChatSessionSummaryView.as_view(), name="chat-session-summary"),
     path("medical-history/", MedicalHistoryView.as_view(), name="patient-medical-history"),
+    path("appointments/", AppointmentListCreateView.as_view(), name="patient-appointments"),
+    path("appointments/<uuid:appointment_id>/", AppointmentDetailView.as_view(), name="patient-appointment-detail"),
 ]

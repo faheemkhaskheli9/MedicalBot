@@ -4,10 +4,12 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from patient.models import ChatSession
+from patient.models import Appointment, ChatSession
+from patient.serializers import AppointmentSerializer
 
 from .models import Doctor, DoctorNote
 from .serializers import (
+    DoctorAppointmentSerializer,
     DoctorLoginSerializer,
     DoctorNoteSerializer,
     DoctorProfileSerializer,
@@ -143,6 +145,68 @@ class DoctorNoteListCreateView(APIView):
             note=serializer.validated_data["note"],
         )
         return Response(DoctorNoteSerializer(note).data, status=status.HTTP_201_CREATED)
+
+
+class DoctorAppointmentListView(APIView):
+    """Doctor can list their appointments, optionally filtered by status."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            doctor = Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        apt_status = request.query_params.get("status")
+        appointments = doctor.appointments.select_related("patient").order_by("scheduled_at")
+        if apt_status:
+            appointments = appointments.filter(status=apt_status)
+        return Response(DoctorAppointmentSerializer(appointments, many=True).data)
+
+
+class DoctorAppointmentDetailView(APIView):
+    """Doctor can confirm, complete, or cancel an appointment and add notes."""
+    permission_classes = [IsAuthenticated]
+
+    ALLOWED_STATUS_TRANSITIONS = {
+        "pending": {"confirmed", "cancelled"},
+        "confirmed": {"completed", "cancelled"},
+    }
+
+    def _get_doctor_and_appointment(self, request, appointment_id):
+        try:
+            doctor = Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return None, None, Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            appointment = Appointment.objects.select_related("patient").get(id=appointment_id, doctor=doctor)
+        except Appointment.DoesNotExist:
+            return None, None, Response({"error": "Appointment not found."}, status=status.HTTP_404_NOT_FOUND)
+        return doctor, appointment, None
+
+    def get(self, request, appointment_id):
+        _, appointment, err = self._get_doctor_and_appointment(request, appointment_id)
+        if err:
+            return err
+        return Response(DoctorAppointmentSerializer(appointment).data)
+
+    def patch(self, request, appointment_id):
+        _, appointment, err = self._get_doctor_and_appointment(request, appointment_id)
+        if err:
+            return err
+        new_status = request.data.get("status")
+        doctor_notes = request.data.get("doctor_notes")
+        if new_status:
+            allowed = self.ALLOWED_STATUS_TRANSITIONS.get(appointment.status, set())
+            if new_status not in allowed:
+                return Response(
+                    {"error": f"Cannot transition from '{appointment.status}' to '{new_status}'."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            appointment.status = new_status
+        if doctor_notes is not None:
+            appointment.doctor_notes = doctor_notes
+        appointment.save()
+        return Response(DoctorAppointmentSerializer(appointment).data)
 
 
 class SessionAssignView(APIView):

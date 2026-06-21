@@ -868,3 +868,115 @@ class MedicalHistoryTests(APITestCase):
         r = self.client.get(MEDICAL_HISTORY_URL)
         self.assertIn("updated_at", r.data)
         self.assertIsNotNone(r.data["updated_at"])
+
+
+APPOINTMENTS_URL = "/api/patient/appointments/"
+
+DOCTOR_REGISTER_URL = "/api/doctor/register/"
+VALID_DOCTOR_PAYLOAD = {
+    "name": "Dr. Sara Ahmed",
+    "email": "sara.ahmed@hospital.com",
+    "password": "DocPass123!",
+    "password_confirm": "DocPass123!",
+    "specialization": "general_practice",
+    "license_number": "LIC-001",
+}
+
+
+def _apt_detail_url(apt_id):
+    return f"{APPOINTMENTS_URL}{apt_id}/"
+
+
+class AppointmentPatientTests(APITestCase):
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_id = dr.data["doctor_id"]
+
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+        from django.utils import timezone
+        from datetime import timedelta
+        self.future_dt = (timezone.now() + timedelta(days=3)).isoformat()
+
+    def _valid_payload(self):
+        return {"doctor": self.doctor_id, "scheduled_at": self.future_dt, "reason": "Routine checkup"}
+
+    def test_create_appointment_returns_201(self):
+        r = self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertIn("id", r.data)
+        self.assertEqual(r.data["status"], "pending")
+
+    def test_create_appointment_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_create_appointment_missing_doctor_rejected(self):
+        payload = {"scheduled_at": self.future_dt, "reason": "Checkup"}
+        r = self.client.post(APPOINTMENTS_URL, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_appointment_missing_scheduled_at_rejected(self):
+        payload = {"doctor": self.doctor_id, "reason": "Checkup"}
+        r = self.client.post(APPOINTMENTS_URL, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_create_appointment_past_date_rejected(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        past_dt = (timezone.now() - timedelta(days=1)).isoformat()
+        payload = {**self._valid_payload(), "scheduled_at": past_dt}
+        r = self.client.post(APPOINTMENTS_URL, payload, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_list_appointments_returns_own(self):
+        self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        r = self.client.get(APPOINTMENTS_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+
+    def test_list_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(APPOINTMENTS_URL)
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_get_appointment_detail(self):
+        create_r = self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        apt_id = create_r.data["id"]
+        r = self.client.get(_apt_detail_url(apt_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["doctor_name"], VALID_DOCTOR_PAYLOAD["name"])
+
+    def test_patient_can_cancel_pending_appointment(self):
+        create_r = self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        apt_id = create_r.data["id"]
+        r = self.client.delete(_apt_detail_url(apt_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], "cancelled")
+
+    def test_patient_cannot_cancel_confirmed_appointment(self):
+        from patient.models import Appointment
+        create_r = self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        apt_id = create_r.data["id"]
+        Appointment.objects.filter(id=apt_id).update(status="confirmed")
+        r = self.client.delete(_apt_detail_url(apt_id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_second_patient_cannot_access_appointment(self):
+        create_r = self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        apt_id = create_r.data["id"]
+        other = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        r = self.client.get(_apt_detail_url(apt_id))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_filter_appointments_by_status(self):
+        self.client.post(APPOINTMENTS_URL, self._valid_payload(), format="json")
+        r = self.client.get(f"{APPOINTMENTS_URL}?status=pending")
+        self.assertEqual(len(r.data), 1)
+        r2 = self.client.get(f"{APPOINTMENTS_URL}?status=confirmed")
+        self.assertEqual(len(r2.data), 0)

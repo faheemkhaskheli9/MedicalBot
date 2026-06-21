@@ -9,9 +9,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .agents.runner import run_triage_graph
 from .emergency_detection import EMERGENCY_GUIDANCE, detect_emergency
 from .intent_detection import detect_intent
-from .models import ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
+from .models import Appointment, ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
 from .summary import generate_session_summary
 from .serializers import (
+    AppointmentSerializer,
     ChatSessionListSerializer,
     ChatSessionSerializer,
     MedicalHistorySerializer,
@@ -346,6 +347,75 @@ class MedicalHistoryView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class AppointmentListCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_patient(self, request):
+        try:
+            return Patient.objects.get(pk=request.user.pk), None
+        except Patient.DoesNotExist:
+            return None, Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    def get(self, request):
+        patient, err = self._get_patient(request)
+        if err:
+            return err
+        apt_status = request.query_params.get("status")
+        appointments = patient.appointments.select_related("doctor", "session")
+        if apt_status:
+            appointments = appointments.filter(status=apt_status)
+        return Response(AppointmentSerializer(appointments, many=True).data)
+
+    def post(self, request):
+        patient, err = self._get_patient(request)
+        if err:
+            return err
+        serializer = AppointmentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        from doctor.models import Doctor
+        doctor_id = serializer.validated_data["doctor"].pk
+        try:
+            doctor = Doctor.objects.get(pk=doctor_id)
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor not found."}, status=status.HTTP_404_NOT_FOUND)
+        appointment = serializer.save(patient=patient, doctor=doctor)
+        return Response(AppointmentSerializer(appointment).data, status=status.HTTP_201_CREATED)
+
+
+class AppointmentDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_patient_and_appointment(self, request, appointment_id):
+        try:
+            patient = Patient.objects.get(pk=request.user.pk)
+        except Patient.DoesNotExist:
+            return None, None, Response({"error": "Patient profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            appointment = Appointment.objects.select_related("doctor", "session").get(id=appointment_id, patient=patient)
+        except Appointment.DoesNotExist:
+            return None, None, Response({"error": "Appointment not found."}, status=status.HTTP_404_NOT_FOUND)
+        return patient, appointment, None
+
+    def get(self, request, appointment_id):
+        _, appointment, err = self._get_patient_and_appointment(request, appointment_id)
+        if err:
+            return err
+        return Response(AppointmentSerializer(appointment).data)
+
+    def delete(self, request, appointment_id):
+        _, appointment, err = self._get_patient_and_appointment(request, appointment_id)
+        if err:
+            return err
+        if appointment.status not in ("pending",):
+            return Response(
+                {"error": "Only pending appointments can be cancelled by the patient."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        appointment.status = "cancelled"
+        appointment.save(update_fields=["status", "updated_at"])
+        return Response(AppointmentSerializer(appointment).data)
 
 
 class PatientLogoutView(APIView):

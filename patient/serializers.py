@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
+from .models import Appointment, ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
 
 
 class PatientRegisterSerializer(serializers.Serializer):
@@ -95,6 +95,27 @@ class EmergencyEventSerializer(serializers.ModelSerializer):
         model = EmergencyEvent
         fields = ["id", "trigger_message", "symptoms_detected", "guidance_given", "created_at"]
         read_only_fields = ["id", "trigger_message", "symptoms_detected", "guidance_given", "created_at"]
+
+
+class AppointmentSerializer(serializers.ModelSerializer):
+    doctor_name = serializers.CharField(source="doctor.name", read_only=True)
+    doctor_specialization = serializers.CharField(source="doctor.specialization", read_only=True)
+    session_id = serializers.UUIDField(source="session.id", read_only=True, allow_null=True)
+
+    class Meta:
+        model = Appointment
+        fields = [
+            "id", "doctor", "doctor_name", "doctor_specialization",
+            "session_id", "scheduled_at", "reason", "status",
+            "doctor_notes", "created_at", "updated_at",
+        ]
+        read_only_fields = ["id", "doctor_name", "doctor_specialization", "session_id", "status", "doctor_notes", "created_at", "updated_at"]
+
+    def validate_scheduled_at(self, value):
+        from django.utils import timezone
+        if value <= timezone.now():
+            raise serializers.ValidationError("Appointment must be scheduled in the future.")
+        return value
 
 
 class AssignedDoctorSerializer(serializers.Serializer):

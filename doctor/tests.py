@@ -470,3 +470,121 @@ class SessionAssignTests(APITestCase):
         r = self.client.get(f"{PATIENT_SESSIONS_URL}{self.session_id}/")
         self.assertIsNotNone(r.data["assigned_doctor"])
         self.assertEqual(r.data["assigned_doctor"]["name"], VALID_DOCTOR_PAYLOAD["name"])
+
+
+DOCTOR_APPOINTMENTS_URL = "/api/doctor/appointments/"
+PATIENT_APPOINTMENTS_URL = "/api/patient/appointments/"
+
+
+def _doctor_apt_detail_url(apt_id):
+    return f"{DOCTOR_APPOINTMENTS_URL}{apt_id}/"
+
+
+class DoctorAppointmentTests(APITestCase):
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+        self.doctor_id = dr.data["doctor_id"]
+
+        pr = self.client.post(PATIENT_REGISTER_URL, VALID_PATIENT_PAYLOAD, format="json")
+        self.patient_token = pr.data["tokens"]["access"]
+
+        from django.utils import timezone
+        from datetime import timedelta
+        self.future_dt = (timezone.now() + timedelta(days=3)).isoformat()
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+        apt_r = self.client.post(
+            PATIENT_APPOINTMENTS_URL,
+            {"doctor": self.doctor_id, "scheduled_at": self.future_dt, "reason": "Checkup"},
+            format="json",
+        )
+        self.apt_id = apt_r.data["id"]
+
+    def _auth_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+
+    def _auth_patient(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+
+    def test_doctor_can_list_own_appointments(self):
+        self._auth_doctor()
+        r = self.client.get(DOCTOR_APPOINTMENTS_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(r.data), 1)
+
+    def test_doctor_appointment_list_shows_patient_info(self):
+        self._auth_doctor()
+        r = self.client.get(DOCTOR_APPOINTMENTS_URL)
+        apt = r.data[0]
+        self.assertIn("patient_name", apt)
+        self.assertIn("patient_age", apt)
+        self.assertEqual(apt["patient_name"], VALID_PATIENT_PAYLOAD["name"])
+
+    def test_doctor_can_get_appointment_detail(self):
+        self._auth_doctor()
+        r = self.client.get(_doctor_apt_detail_url(self.apt_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(r.data["id"]), self.apt_id)
+
+    def test_doctor_can_confirm_appointment(self):
+        self._auth_doctor()
+        r = self.client.patch(_doctor_apt_detail_url(self.apt_id), {"status": "confirmed"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], "confirmed")
+
+    def test_doctor_can_cancel_appointment(self):
+        self._auth_doctor()
+        r = self.client.patch(_doctor_apt_detail_url(self.apt_id), {"status": "cancelled"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["status"], "cancelled")
+
+    def test_doctor_can_add_notes_to_appointment(self):
+        self._auth_doctor()
+        r = self.client.patch(
+            _doctor_apt_detail_url(self.apt_id),
+            {"doctor_notes": "Patient is on aspirin."},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["doctor_notes"], "Patient is on aspirin.")
+
+    def test_invalid_status_transition_rejected(self):
+        self._auth_doctor()
+        r = self.client.patch(_doctor_apt_detail_url(self.apt_id), {"status": "completed"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_cannot_transition_from_cancelled(self):
+        self._auth_doctor()
+        self.client.patch(_doctor_apt_detail_url(self.apt_id), {"status": "cancelled"}, format="json")
+        r = self.client.patch(_doctor_apt_detail_url(self.apt_id), {"status": "confirmed"}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_doctor_appointment_list_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(DOCTOR_APPOINTMENTS_URL)
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_cannot_access_doctor_appointment_endpoint(self):
+        self._auth_patient()
+        r = self.client.get(DOCTOR_APPOINTMENTS_URL)
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_filter_doctor_appointments_by_status(self):
+        self._auth_doctor()
+        self.client.patch(_doctor_apt_detail_url(self.apt_id), {"status": "confirmed"}, format="json")
+        r = self.client.get(f"{DOCTOR_APPOINTMENTS_URL}?status=confirmed")
+        self.assertEqual(len(r.data), 1)
+        r2 = self.client.get(f"{DOCTOR_APPOINTMENTS_URL}?status=pending")
+        self.assertEqual(len(r2.data), 0)
+
+    def test_other_doctors_appointment_not_visible(self):
+        second_doctor_payload = {
+            **VALID_DOCTOR_PAYLOAD,
+            "email": "other.doc@hospital.com",
+            "license_number": "LIC-999",
+        }
+        dr2 = self.client.post(DOCTOR_REGISTER_URL, second_doctor_payload, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {dr2.data['tokens']['access']}")
+        r = self.client.get(DOCTOR_APPOINTMENTS_URL)
+        self.assertEqual(len(r.data), 0)
