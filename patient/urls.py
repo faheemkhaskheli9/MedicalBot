@@ -6,14 +6,17 @@ from .views import (
     ChatMessageCreateView,
     ChatSessionDetailView,
     ChatSessionListCreateView,
+    ChatSessionRecommendationsView,
     ChatSessionSummaryView,
     MedicalHistoryView,
     PatientLoginView,
     PatientLogoutView,
+    PatientPrescriptionExplainView,
     PatientPrescriptionListView,
     PatientProfileView,
     PatientRegisterView,
     PatientSessionPrescriptionListView,
+    PatientSymptomHistoryView,
 )
 
 urlpatterns = [
@@ -25,9 +28,12 @@ urlpatterns = [
     path("chat/sessions/<uuid:session_id>/", ChatSessionDetailView.as_view(), name="chat-session-detail"),
     path("chat/sessions/<uuid:session_id>/messages/", ChatMessageCreateView.as_view(), name="chat-messages"),
     path("chat/sessions/<uuid:session_id>/summary/", ChatSessionSummaryView.as_view(), name="chat-session-summary"),
+    path("chat/sessions/<uuid:session_id>/recommendations/", ChatSessionRecommendationsView.as_view(), name="chat-session-recommendations"),
     path("medical-history/", MedicalHistoryView.as_view(), name="patient-medical-history"),
     path("appointments/", AppointmentListCreateView.as_view(), name="patient-appointments"),
     path("appointments/<uuid:appointment_id>/", AppointmentDetailView.as_view(), name="patient-appointment-detail"),
     path("prescriptions/", PatientPrescriptionListView.as_view(), name="patient-prescriptions"),
+    path("prescriptions/<uuid:prescription_id>/explain/", PatientPrescriptionExplainView.as_view(), name="patient-prescription-explain"),
     path("chat/sessions/<uuid:session_id>/prescriptions/", PatientSessionPrescriptionListView.as_view(), name="patient-session-prescriptions"),
+    path("symptom-history/", PatientSymptomHistoryView.as_view(), name="patient-symptom-history"),
 ]
