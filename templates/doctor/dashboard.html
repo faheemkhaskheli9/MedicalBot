@@ -1,0 +1,1407 @@
+{% extends "base.html" %}
+
+{% block title %}Doctor Dashboard — MedicalBot{% endblock %}
+
+{% block extra_head %}
+<style>
+  /* Two-pane layout fills the viewport below the navbar */
+  #workspace-root {
+    height: calc(100vh - 4rem);
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* Session / appointment items in the left sidebar */
+  .sess-item {
+    display: block; width: 100%; text-align: left;
+    padding: 0.625rem 0.75rem;
+    border-radius: 0.75rem;
+    transition: background 0.12s;
+    border: 1px solid transparent;
+    cursor: pointer;
+    background: transparent;
+  }
+  .sess-item:hover { background: #f9fafb; }
+  .sess-item.active { background: #f0fdf4; border-color: #bbf7d0; }
+
+  /* Inner tabs (Transcript / Notes / Prescriptions / AI Tools) */
+  .itab {
+    padding: 0.625rem 1rem; font-size: 0.8125rem; font-weight: 500;
+    border-bottom: 2px solid transparent; color: #6b7280;
+    transition: color 0.12s, border-color 0.12s; cursor: pointer;
+    background: transparent; border-top: none; border-left: none; border-right: none;
+    white-space: nowrap;
+  }
+  .itab:hover { color: #059669; }
+  .itab.active { color: #059669; border-bottom-color: #059669; }
+
+  /* Side-tab (Sessions | Appointments) */
+  .side-tab {
+    flex: 1; padding: 0.625rem; font-size: 0.75rem; font-weight: 600;
+    text-align: center; border-bottom: 2px solid transparent;
+    color: #9ca3af; cursor: pointer; transition: color 0.12s, border-color 0.12s;
+    background: transparent; border-top: none; border-left: none; border-right: none;
+  }
+  .side-tab.active { color: #059669; border-bottom-color: #059669; }
+
+  /* Risk badges */
+  .risk-emergency { background:#fee2e2; color:#b91c1c; }
+  .risk-urgent    { background:#fef3c7; color:#b45309; }
+  .risk-routine   { background:#d1fae5; color:#065f46; }
+
+  /* Chat bubble read-only (transcript) */
+  .msg-patient { background:#2563eb; color:#fff; border-radius:1rem 1rem 0.25rem 1rem; }
+  .msg-bot     { background:#fff; border:1px solid #e5e7eb; color:#1f2937; border-radius:1rem 1rem 1rem 0.25rem; }
+  .msg-emergency { background:#fef2f2; border:2px solid #f87171; color:#991b1b; border-radius:1rem 1rem 1rem 0.25rem; }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner { animation: spin 0.8s linear infinite; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Loading -->
+<div id="page-loading" class="min-h-[calc(100vh-4rem)] flex items-center justify-center">
+  <div class="text-center">
+    <div class="w-8 h-8 border-2 border-emerald-600 border-t-transparent rounded-full spinner mx-auto mb-3"></div>
+    <p class="text-sm text-gray-400">Loading dashboard…</p>
+  </div>
+</div>
+
+<!-- Error -->
+<div id="page-error" style="display:none" class="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4">
+  <div class="bg-red-50 border border-red-200 rounded-2xl p-8 text-center max-w-sm w-full">
+    <p id="page-error-msg" class="text-sm text-red-700 mb-4"></p>
+    <a href="{% url 'doctor-login-page' %}"
+       class="inline-block px-5 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-xl hover:bg-emerald-700 transition-colors">
+      Log In Again
+    </a>
+  </div>
+</div>
+
+<!-- Main two-pane workspace -->
+<div id="workspace-root" style="display:none">
+
+  <!-- ══ LEFT SIDEBAR ══════════════════════════════════════════════════════ -->
+  <aside class="w-80 flex-shrink-0 bg-white border-r border-gray-200 flex flex-col">
+
+    <!-- Doctor profile mini card -->
+    <div class="px-4 py-3 border-b border-gray-100">
+      <div class="flex items-center gap-3">
+        <div id="doc-avatar"
+             class="w-10 h-10 rounded-xl bg-emerald-600 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">
+        </div>
+        <div class="min-w-0">
+          <p id="doc-name" class="text-sm font-bold text-gray-900 truncate"></p>
+          <p id="doc-spec" class="text-xs text-emerald-600 font-medium capitalize"></p>
+        </div>
+        <button onclick="logout()"
+                class="ml-auto text-xs text-red-500 hover:text-red-700 transition-colors flex-shrink-0">
+          Log out
+        </button>
+      </div>
+    </div>
+
+    <!-- Side-tab bar: Sessions | Appointments -->
+    <div class="flex border-b border-gray-100">
+      <button class="side-tab active" id="side-tab-sessions"     onclick="showSideTab('sessions')">Sessions</button>
+      <button class="side-tab"        id="side-tab-appointments" onclick="showSideTab('appointments')">Appointments</button>
+    </div>
+
+    <!-- Sessions panel -->
+    <div id="side-sessions" class="flex flex-col flex-1 overflow-hidden">
+      <!-- Filters -->
+      <div class="p-3 border-b border-gray-50 space-y-2">
+        <div class="flex gap-2">
+          <select id="filter-risk" onchange="loadSessions()"
+                  class="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+            <option value="">All risk</option>
+            <option value="emergency">Emergency</option>
+            <option value="urgent">Urgent</option>
+            <option value="routine">Routine</option>
+          </select>
+          <select id="filter-status" onchange="loadSessions()"
+                  class="flex-1 px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <label class="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+          <input type="checkbox" id="filter-ai" onchange="loadSessions()" class="rounded text-emerald-600">
+          AI-prioritize (emergency · unassigned first)
+        </label>
+      </div>
+      <!-- Session list -->
+      <div id="sessions-list" class="flex-1 overflow-y-auto py-1 px-2 space-y-1">
+        <p class="text-xs text-gray-400 px-2 py-2">Loading sessions…</p>
+      </div>
+    </div>
+
+    <!-- Appointments panel -->
+    <div id="side-appointments" style="display:none" class="flex flex-col flex-1 overflow-hidden">
+      <div class="p-3 border-b border-gray-50">
+        <select id="filter-apt-status" onchange="loadAppointments()"
+                class="w-full px-2 py-1.5 text-xs border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-emerald-400">
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+      <div id="appointments-list" class="flex-1 overflow-y-auto py-1 px-2 space-y-1">
+        <p class="text-xs text-gray-400 px-2 py-2">Loading appointments…</p>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ══ RIGHT WORKSPACE ════════════════════════════════════════════════════ -->
+  <main class="flex-1 flex flex-col overflow-hidden bg-gray-50">
+
+    <!-- Empty state (no session selected) -->
+    <div id="ws-empty" class="flex-1 flex items-center justify-center p-8">
+      <div class="text-center max-w-xs">
+        <div class="w-16 h-16 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <svg class="w-8 h-8 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+          </svg>
+        </div>
+        <h2 class="text-base font-bold text-gray-900 mb-1">Select a patient session</h2>
+        <p class="text-sm text-gray-400">Choose a session from the sidebar to review the transcript, add notes, and issue prescriptions.</p>
+      </div>
+    </div>
+
+    <!-- Session workspace -->
+    <div id="ws-session" style="display:none" class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Session header -->
+      <div class="bg-white border-b border-gray-200 px-6 py-4 flex-shrink-0">
+        <div class="flex items-start gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap mb-0.5">
+              <h2 id="ws-name" class="text-base font-bold text-gray-900"></h2>
+              <span id="ws-risk"   class="text-xs font-semibold px-2.5 py-0.5 rounded-full" style="display:none"></span>
+              <span id="ws-status" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-gray-100 text-gray-600 capitalize"></span>
+            </div>
+            <p id="ws-meta"     class="text-xs text-gray-400"></p>
+            <p id="ws-assigned" class="text-xs mt-0.5"></p>
+          </div>
+          <div class="flex flex-col items-end gap-1 flex-shrink-0">
+            <button id="assign-btn" onclick="toggleAssign()"
+                    class="text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"></button>
+            <p id="assign-error" style="display:none" class="text-xs text-red-500"></p>
+          </div>
+        </div>
+
+        <!-- Clinical summary strip (shown if session has a summary) -->
+        <div id="summary-strip" style="display:none"
+             class="mt-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 text-xs">
+          <div class="flex items-center justify-between mb-1">
+            <span class="font-semibold text-emerald-800">Clinical Summary</span>
+            <span id="summary-risk-badge" class="text-xs font-semibold px-2 py-0.5 rounded-full"></span>
+          </div>
+          <p id="summary-complaint" class="text-emerald-900 mb-0.5"></p>
+          <p id="summary-action"   class="text-emerald-700 italic"></p>
+          <p id="summary-notes"    class="text-amber-700 mt-1 font-medium" style="display:none"></p>
+        </div>
+      </div>
+
+      <!-- Inner tabs -->
+      <div class="bg-white border-b border-gray-100 px-6 flex-shrink-0 overflow-x-auto">
+        <div class="flex min-w-max">
+          <button class="itab active" id="itab-transcript"    onclick="showInnerTab('transcript')">Transcript</button>
+          <button class="itab"        id="itab-notes"         onclick="showInnerTab('notes')">Notes</button>
+          <button class="itab"        id="itab-prescriptions" onclick="showInnerTab('prescriptions')">Prescriptions</button>
+          <button class="itab"        id="itab-ai"            onclick="showInnerTab('ai')">AI Tools</button>
+        </div>
+      </div>
+
+      <!-- Inner panels -->
+      <div class="flex-1 overflow-y-auto">
+
+        <!-- TRANSCRIPT ─────────────────────────────────────────────────── -->
+        <div id="ipanel-transcript" class="p-6">
+          <div id="transcript-loading" class="text-center text-sm text-gray-400 py-8">Loading transcript…</div>
+          <div id="transcript-empty"  style="display:none" class="text-center text-sm text-gray-400 py-8">No messages in this session.</div>
+          <div id="transcript-list"   style="display:none" class="space-y-3 max-w-2xl"></div>
+        </div>
+
+        <!-- NOTES ─────────────────────────────────────────────────────── -->
+        <div id="ipanel-notes" style="display:none" class="p-6 space-y-6">
+
+          <!-- Existing notes -->
+          <div>
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Clinical Notes</h3>
+            <div id="notes-loading" class="text-sm text-gray-400">Loading notes…</div>
+            <div id="notes-empty"   style="display:none" class="text-sm text-gray-400">No notes yet for this session.</div>
+            <div id="notes-list"    style="display:none" class="space-y-3"></div>
+          </div>
+
+          <!-- Add note form -->
+          <div class="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Add Note</h3>
+            <div class="mb-3 flex items-center gap-2">
+              <button onclick="generateSOAPDraft()"
+                      class="text-xs font-medium text-violet-700 border border-violet-200 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors">
+                Generate SOAP Draft (AI)
+              </button>
+              <span id="soap-loading" style="display:none" class="text-xs text-gray-400">Generating…</span>
+            </div>
+            <textarea id="note-textarea" rows="4"
+                      placeholder="Write your clinical note here…"
+                      class="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"></textarea>
+            <div id="note-error" style="display:none"
+                 class="mt-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"></div>
+            <div class="mt-2 flex justify-end">
+              <button onclick="submitNote()"
+                      class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-xl hover:bg-emerald-700 transition-colors">
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- PRESCRIPTIONS ──────────────────────────────────────────────── -->
+        <div id="ipanel-prescriptions" style="display:none" class="p-6 space-y-6">
+
+          <!-- Existing prescriptions -->
+          <div>
+            <h3 class="text-sm font-semibold text-gray-700 mb-3">Issued Prescriptions</h3>
+            <div id="rx-loading" class="text-sm text-gray-400">Loading prescriptions…</div>
+            <div id="rx-empty"   style="display:none" class="text-sm text-gray-400">No prescriptions issued for this session.</div>
+            <div id="rx-list"    style="display:none" class="space-y-3"></div>
+          </div>
+
+          <!-- Drug interaction check -->
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-5">
+            <h3 class="text-sm font-semibold text-amber-800 mb-1">Drug Interaction Check (AI)</h3>
+            <p class="text-xs text-amber-700 mb-3">Enter proposed medications separated by commas to check for known interactions.</p>
+            <div class="flex gap-2">
+              <input id="drug-check-input" type="text"
+                     placeholder="e.g. Warfarin, Aspirin, Ibuprofen"
+                     class="flex-1 px-3 py-2 border border-amber-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent"/>
+              <button onclick="checkDrugInteractions()"
+                      class="px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-xl hover:bg-amber-700 transition-colors">
+                Check
+              </button>
+            </div>
+            <div id="drug-result" style="display:none"
+                 class="mt-3 text-xs text-amber-900 bg-amber-100 border border-amber-200 rounded-lg p-3 whitespace-pre-wrap"></div>
+          </div>
+
+          <!-- Issue new prescription -->
+          <div class="bg-white rounded-xl border border-gray-200 p-5">
+            <h3 class="text-sm font-semibold text-gray-700 mb-4">Issue Prescription</h3>
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Medications <span class="text-red-500">*</span></label>
+                <p class="text-xs text-gray-400 mb-1">One medication per line (e.g. Amoxicillin 500mg)</p>
+                <textarea id="rx-meds" rows="3"
+                          placeholder="Amoxicillin 500mg&#10;Paracetamol 1g"
+                          class="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"></textarea>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Instructions</label>
+                <textarea id="rx-instructions" rows="2"
+                          placeholder="e.g. Take twice daily with food for 7 days"
+                          class="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"></textarea>
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Follow-up Date (optional)</label>
+                <input id="rx-followup" type="date"
+                       class="w-full sm:w-56 px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
+              </div>
+              <div id="rx-error" style="display:none"
+                   class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"></div>
+              <div class="flex justify-end">
+                <button onclick="submitPrescription()"
+                        class="px-4 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-xl hover:bg-emerald-700 transition-colors">
+                  Issue Prescription
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI TOOLS ───────────────────────────────────────────────────── -->
+        <div id="ipanel-ai" style="display:none" class="p-6 space-y-6">
+
+          <!-- Differential diagnosis -->
+          <div class="bg-white rounded-xl border border-gray-200 p-5">
+            <div class="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-700">Differential Diagnosis (AI)</h3>
+                <p class="text-xs text-gray-400 mt-0.5">Generate possible diagnoses based on session transcript and summary.</p>
+              </div>
+              <button onclick="generateDiagnosis()"
+                      class="flex-shrink-0 text-xs font-medium text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors">
+                Generate
+              </button>
+            </div>
+            <div id="diag-loading" style="display:none" class="text-xs text-gray-400">Analyzing session data…</div>
+            <div id="diag-result"  style="display:none" class="space-y-1"></div>
+          </div>
+
+          <!-- Cross-session patient history -->
+          <div class="bg-white rounded-xl border border-gray-200 p-5">
+            <div class="flex items-start justify-between gap-3 mb-3">
+              <div>
+                <h3 class="text-sm font-semibold text-gray-700">Patient Health History Summary</h3>
+                <p class="text-xs text-gray-400 mt-0.5">AI analysis of all sessions for this patient to identify trends and risk patterns.</p>
+              </div>
+              <button onclick="loadCrossSummary()"
+                      class="flex-shrink-0 text-xs font-medium text-violet-700 border border-violet-200 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors">
+                Analyze
+              </button>
+            </div>
+            <div id="cross-loading" style="display:none" class="text-xs text-gray-400">Analyzing patient history…</div>
+            <div id="cross-result"  style="display:none" class="space-y-4"></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Appointment workspace (shown when appointment is selected from sidebar) -->
+    <div id="ws-appointment" style="display:none" class="flex-1 overflow-y-auto p-8">
+      <div class="max-w-xl bg-white rounded-2xl border border-gray-200 p-6">
+        <div class="flex items-start justify-between gap-3 mb-5">
+          <div>
+            <h2 id="apt-ws-patient" class="text-base font-bold text-gray-900"></h2>
+            <p id="apt-ws-date"    class="text-sm text-gray-500 mt-0.5"></p>
+            <p id="apt-ws-reason"  class="text-sm text-gray-700 mt-1"></p>
+          </div>
+          <span id="apt-ws-status" class="text-xs font-semibold px-2.5 py-1 rounded-full capitalize flex-shrink-0"></span>
+        </div>
+        <!-- Doctor notes -->
+        <div class="mb-4">
+          <label class="block text-xs font-medium text-gray-500 mb-1.5" for="apt-notes-input">Doctor Notes</label>
+          <textarea id="apt-notes-input" rows="3" placeholder="Add notes about this appointment…"
+                    class="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"></textarea>
+        </div>
+        <!-- Action buttons (status transitions) -->
+        <div id="apt-actions" class="flex flex-wrap gap-2"></div>
+        <div id="apt-action-error" style="display:none"
+             class="mt-3 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"></div>
+      </div>
+    </div>
+
+  </main>
+</div><!-- /workspace-root -->
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const API = {
+  profile:        '/api/doctor/profile/',
+  sessions:       '/api/doctor/patients/sessions/',
+  sessionDetail:  id => `/api/doctor/patients/sessions/${id}/`,
+  assign:         id => `/api/doctor/patients/sessions/${id}/assign/`,
+  notes:          id => `/api/doctor/patients/sessions/${id}/notes/`,
+  noteDraft:      id => `/api/doctor/patients/sessions/${id}/notes/draft/`,
+  prescriptions:  id => `/api/doctor/patients/sessions/${id}/prescriptions/`,
+  drugCheck:      id => `/api/doctor/patients/sessions/${id}/prescriptions/check-interactions/`,
+  aiDiagnosis:    id => `/api/doctor/patients/sessions/${id}/ai-diagnosis/`,
+  crossSummary:   pid => `/api/doctor/patients/${pid}/summary/`,
+  appointments:   '/api/doctor/appointments/',
+  aptDetail:      id => `/api/doctor/appointments/${id}/`,
+};
+
+const RISK_COLOR = {
+  emergency: 'risk-emergency',
+  urgent:    'risk-urgent',
+  routine:   'risk-routine',
+};
+const APT_STATUS_COLOR = {
+  pending:   'bg-yellow-100 text-yellow-700',
+  confirmed: 'bg-green-100 text-green-700',
+  completed: 'bg-gray-100 text-gray-600',
+  cancelled: 'bg-red-100 text-red-600',
+};
+const SPEC_LABELS = {
+  general_practice: 'General Practice', cardiology: 'Cardiology', dermatology: 'Dermatology',
+  neurology: 'Neurology', orthopedics: 'Orthopedics', pediatrics: 'Pediatrics',
+  emergency_medicine: 'Emergency Medicine', internal_medicine: 'Internal Medicine',
+  psychiatry: 'Psychiatry', other: 'Other',
+};
+const AGENT_LABELS = {
+  intake_agent:      'MedicalBot · Intake',
+  appointment_agent: 'MedicalBot · Appointments',
+  medication_agent:  'MedicalBot · Medication',
+  lab_report_agent:  'MedicalBot · Lab Reports',
+  general_agent:     'MedicalBot',
+  emergency_triage:  'Emergency Triage',
+  fallback:          'MedicalBot',
+};
+
+// State
+let myDoctorId   = null;
+let myDoctorName = null;  // used to identify own notes/prescriptions
+let currentSessId   = null;
+let currentPatientId = null;
+let currentAptId     = null;
+let isAssigned       = false;
+let loadedInner      = new Set();  // reset per session
+
+function authHeaders() {
+  return {
+    'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+async function boot() {
+  const token = localStorage.getItem('access_token');
+  const role  = localStorage.getItem('user_role');
+  if (!token || role !== 'doctor') {
+    window.location.href = '{% url "doctor-login-page" %}';
+    return;
+  }
+  try {
+    const res = await fetch(API.profile, { headers: authHeaders() });
+    if (res.status === 401) { clearAndRedirect(); return; }
+    if (!res.ok) { showPageError('Failed to load your profile. Please try again.'); return; }
+    const data = await res.json();
+    renderDoctorHeader(data);
+    document.getElementById('page-loading').style.display    = 'none';
+    document.getElementById('workspace-root').style.display  = 'flex';
+    loadSessions();
+  } catch {
+    showPageError('Network error. Please check your connection.');
+  }
+}
+
+function renderDoctorHeader(data) {
+  myDoctorId   = data.id;
+  myDoctorName = data.name;
+  const initials = data.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  document.getElementById('doc-avatar').textContent = initials;
+  document.getElementById('doc-name').textContent   = 'Dr. ' + data.name;
+  document.getElementById('doc-spec').textContent   = SPEC_LABELS[data.specialization] || data.specialization;
+  localStorage.setItem('doctor_name', data.name);
+}
+
+// ── Side-tab: Sessions ↔ Appointments ─────────────────────────────────────────
+function showSideTab(name) {
+  document.getElementById('side-tab-sessions').classList.toggle('active', name === 'sessions');
+  document.getElementById('side-tab-appointments').classList.toggle('active', name === 'appointments');
+  document.getElementById('side-sessions').style.display     = name === 'sessions'     ? '' : 'none';
+  document.getElementById('side-appointments').style.display = name === 'appointments' ? '' : 'none';
+  if (name === 'appointments') loadAppointments();
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+async function loadSessions() {
+  const risk    = document.getElementById('filter-risk').value;
+  const status  = document.getElementById('filter-status').value;
+  const ai      = document.getElementById('filter-ai').checked;
+
+  let url = API.sessions + '?';
+  if (risk)   url += `risk_level=${risk}&`;
+  if (status) url += `status=${status}&`;
+  if (ai)     url += `ai_prioritized=true&`;
+
+  const list = document.getElementById('sessions-list');
+  list.innerHTML = '<p class="text-xs text-gray-400 px-2 py-2">Loading…</p>';
+
+  try {
+    const res  = await fetch(url, { headers: authHeaders() });
+    const data = await res.json();
+
+    if (!Array.isArray(data) || !data.length) {
+      list.innerHTML = '<p class="text-xs text-gray-400 px-2 py-3">No sessions match the current filters.</p>';
+      return;
+    }
+    list.innerHTML = '';
+    data.forEach(s => {
+      const btn = document.createElement('button');
+      btn.className = 'sess-item' + (s.session_id === currentSessId ? ' active' : '');
+      btn.dataset.sessionId = s.session_id;  // used by openSession to highlight correctly
+      btn.onclick   = () => openSession(s.session_id);
+
+      const riskClass  = RISK_COLOR[s.risk_level] || '';
+      const riskBadge  = s.risk_level
+        ? `<span class="text-xs font-semibold px-1.5 py-0.5 rounded-md ${riskClass} capitalize">${s.risk_level}</span>`
+        : '';
+      const assigned   = s.assigned_doctor
+        ? `<span class="text-xs text-emerald-600">Assigned</span>`
+        : `<span class="text-xs text-gray-300">Unassigned</span>`;
+      const dateStr    = new Date(s.started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const statusDot  = s.status === 'active' ? 'bg-green-400' : 'bg-gray-300';
+
+      btn.innerHTML = `
+        <div class="flex items-center justify-between mb-0.5 gap-2">
+          <div class="flex items-center gap-1.5 min-w-0">
+            <span class="w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusDot}"></span>
+            <span class="text-xs font-semibold text-gray-800 truncate">${escapeHtml(s.patient_name)}</span>
+          </div>
+          <span class="text-xs text-gray-400 flex-shrink-0">${dateStr}</span>
+        </div>
+        <div class="flex items-center gap-1.5 pl-3">
+          ${riskBadge}
+          ${assigned}
+          ${s.has_summary ? '<span class="text-xs text-teal-600">Summary</span>' : ''}
+          <span class="text-xs text-gray-400">${s.message_count} msgs</span>
+        </div>`;
+      list.appendChild(btn);
+    });
+  } catch {
+    list.innerHTML = '<p class="text-xs text-red-400 px-2 py-2">Failed to load sessions.</p>';
+  }
+}
+
+// ── Open a session ────────────────────────────────────────────────────────────
+async function openSession(sessionId) {
+  currentSessId   = sessionId;
+  currentPatientId = null;
+  loadedInner.clear();
+
+  // Update sidebar highlight using data-session-id attribute
+  document.querySelectorAll('.sess-item').forEach(el => el.classList.remove('active'));
+  const activeItem = document.querySelector(`.sess-item[data-session-id="${sessionId}"]`);
+  if (activeItem) activeItem.classList.add('active');
+
+  // Show session workspace, hide others
+  document.getElementById('ws-empty').style.display       = 'none';
+  document.getElementById('ws-appointment').style.display = 'none';
+  document.getElementById('ws-session').style.display     = '';
+
+  // Reset inner tabs to Transcript
+  showInnerTab('transcript');
+
+  try {
+    const res  = await fetch(API.sessionDetail(sessionId), { headers: authHeaders() });
+    if (!res.ok) {
+      document.getElementById('transcript-loading').textContent = 'Failed to load session.';
+      return;
+    }
+    const data = await res.json();
+    currentPatientId = data.patient_id;
+    renderSessionHeader(data);
+    renderTranscript(data.messages || []);
+    loadedInner.add('transcript');
+  } catch {
+    document.getElementById('transcript-loading').textContent = 'Network error. Please try again.';
+  }
+}
+
+function renderSessionHeader(data) {
+  document.getElementById('ws-name').textContent   = data.patient_name;
+  document.getElementById('ws-status').textContent = data.status;
+
+  const riskEl = document.getElementById('ws-risk');
+  if (data.risk_level) {
+    riskEl.textContent  = data.risk_level;
+    riskEl.className    = `text-xs font-semibold px-2.5 py-0.5 rounded-full capitalize ${RISK_COLOR[data.risk_level] || ''}`;
+    riskEl.style.display = '';
+  } else {
+    riskEl.style.display = 'none';
+  }
+
+  const dateStr = new Date(data.started_at).toLocaleString('en-GB', {
+    day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+  });
+  document.getElementById('ws-meta').textContent =
+    `${data.patient_age} yrs · ${data.patient_gender} · ${data.patient_phone} · Started ${dateStr}`;
+
+  // Assigned label
+  const assignedEl = document.getElementById('ws-assigned');
+  if (data.assigned_doctor) {
+    assignedEl.textContent = `Assigned to Dr. ${data.assigned_doctor.name}`;
+    assignedEl.className   = 'text-xs text-emerald-600 mt-0.5';
+    isAssigned = (data.assigned_doctor.id === myDoctorId);
+  } else {
+    assignedEl.textContent = 'Unassigned';
+    assignedEl.className   = 'text-xs text-gray-400 mt-0.5';
+    isAssigned = false;
+  }
+  renderAssignBtn(data.assigned_doctor);
+
+  // Summary strip
+  const summaryStrip = document.getElementById('summary-strip');
+  if (data.summary) {
+    const s = data.summary;
+    document.getElementById('summary-complaint').textContent = s.chief_complaint || '';
+    document.getElementById('summary-action').textContent    = s.recommended_action || '';
+    const notesEl = document.getElementById('summary-notes');
+    if (s.notes_for_doctor) {
+      notesEl.textContent     = '📋 ' + s.notes_for_doctor;
+      notesEl.style.display   = '';
+    } else {
+      notesEl.style.display   = 'none';
+    }
+    const riskBadge = document.getElementById('summary-risk-badge');
+    riskBadge.textContent = (s.risk_level || '').toUpperCase();
+    riskBadge.className   = `text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${RISK_COLOR[s.risk_level] || 'bg-gray-100 text-gray-600'}`;
+    summaryStrip.style.display = '';
+  } else {
+    summaryStrip.style.display = 'none';
+  }
+}
+
+function renderAssignBtn(assignedDoctor) {
+  const btn = document.getElementById('assign-btn');
+  if (!assignedDoctor) {
+    btn.textContent = 'Assign to me';
+    btn.className   = 'text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors text-emerald-700 border-emerald-200 bg-emerald-50 hover:bg-emerald-100';
+  } else if (isAssigned) {
+    btn.textContent = 'Unassign';
+    btn.className   = 'text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors text-red-600 border-red-200 bg-red-50 hover:bg-red-100';
+  } else {
+    btn.textContent = 'Assigned to other';
+    btn.className   = 'text-xs font-medium px-3 py-1.5 rounded-lg border text-gray-400 border-gray-200 cursor-default';
+  }
+}
+
+async function toggleAssign() {
+  if (!currentSessId) return;
+  const hasOther = document.getElementById('ws-assigned').textContent.startsWith('Assigned to') && !isAssigned;
+  if (hasOther) return;
+
+  try {
+    let res;
+    if (isAssigned) {
+      res = await fetch(API.assign(currentSessId), { method: 'DELETE', headers: authHeaders() });
+    } else {
+      res = await fetch(API.assign(currentSessId), { method: 'POST', headers: authHeaders(), body: JSON.stringify({}) });
+    }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const assignErr = document.getElementById('assign-error');
+      assignErr.textContent = err.error || 'Could not update assignment.';
+      assignErr.style.display = '';
+      setTimeout(() => { assignErr.style.display = 'none'; }, 4000);
+      return;
+    }
+    // Re-load session header
+    const detailRes = await fetch(API.sessionDetail(currentSessId), { headers: authHeaders() });
+    if (detailRes.ok) {
+      const data = await detailRes.json();
+      renderSessionHeader(data);
+    }
+    loadSessions();
+  } catch {
+    const assignErr = document.getElementById('assign-error');
+    assignErr.textContent = 'Network error. Please try again.';
+    assignErr.style.display = '';
+    setTimeout(() => { assignErr.style.display = 'none'; }, 4000);
+  }
+}
+
+// ── Transcript ────────────────────────────────────────────────────────────────
+function renderTranscript(messages) {
+  const loadingEl = document.getElementById('transcript-loading');
+  const emptyEl   = document.getElementById('transcript-empty');
+  const listEl    = document.getElementById('transcript-list');
+
+  loadingEl.style.display = 'none';
+
+  if (!messages.length) {
+    emptyEl.style.display = '';
+    return;
+  }
+
+  listEl.innerHTML = '';
+  messages.forEach(m => {
+    const time    = new Date(m.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    const content = escapeHtml(m.content).replace(/\n/g, '<br>');
+    const div     = document.createElement('div');
+
+    if (m.sender === 'patient') {
+      div.className = 'flex justify-end';
+      div.innerHTML = `
+        <div class="max-w-[75%]">
+          <div class="msg-patient text-sm px-4 py-2.5 shadow-sm">${content}</div>
+          <p class="text-right text-xs text-gray-400 mt-1">${time}</p>
+        </div>`;
+    } else if (m.agent_name === 'emergency_triage') {
+      div.innerHTML = `
+        <div class="max-w-[75%]">
+          <p class="text-xs font-semibold text-red-500 mb-1">Emergency Triage</p>
+          <div class="msg-emergency text-sm px-4 py-2.5 shadow-sm">${content}</div>
+          <p class="text-xs text-gray-400 mt-1">${time}</p>
+        </div>`;
+    } else {
+      const agentLabel = AGENT_LABELS[m.agent_name] || 'MedicalBot';
+      div.innerHTML = `
+        <div class="max-w-[75%]">
+          <p class="text-xs text-gray-400 mb-1">${agentLabel}</p>
+          <div class="msg-bot text-sm px-4 py-2.5 shadow-sm">${content}</div>
+          <p class="text-xs text-gray-400 mt-1">${time}</p>
+        </div>`;
+    }
+    listEl.appendChild(div);
+  });
+  listEl.style.display = '';
+}
+
+// ── Inner tabs ────────────────────────────────────────────────────────────────
+function showInnerTab(name) {
+  ['transcript', 'notes', 'prescriptions', 'ai'].forEach(t => {
+    document.getElementById(`itab-${t}`).classList.toggle('active', t === name);
+    document.getElementById(`ipanel-${t}`).style.display = t === name ? '' : 'none';
+  });
+  if (!loadedInner.has(name) && currentSessId) {
+    loadedInner.add(name);
+    if (name === 'notes')         loadNotes();
+    if (name === 'prescriptions') loadPrescriptions();
+  }
+}
+
+// ── Notes ─────────────────────────────────────────────────────────────────────
+async function loadNotes() {
+  document.getElementById('notes-loading').style.display = '';
+  document.getElementById('notes-list').style.display   = 'none';
+  document.getElementById('notes-empty').style.display  = 'none';
+  try {
+    const res  = await fetch(API.notes(currentSessId), { headers: authHeaders() });
+    const data = await res.json();
+    document.getElementById('notes-loading').style.display = 'none';
+    if (!data.length) { document.getElementById('notes-empty').style.display = ''; return; }
+    const list = document.getElementById('notes-list');
+    list.innerHTML = '';
+    data.forEach(n => {
+      const div = document.createElement('div');
+      div.id        = `note-card-${n.id}`;
+      div.className = 'bg-white rounded-xl border border-gray-200 px-4 py-3';
+      const date    = new Date(n.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+      const isMyNote = n.doctor_name === myDoctorName;
+      div.innerHTML = `
+        <div class="flex items-center justify-between mb-1.5">
+          <p class="text-xs font-semibold text-gray-500">Dr. ${escapeHtml(n.doctor_name || '—')}</p>
+          <div class="flex items-center gap-2">
+            <p class="text-xs text-gray-400">${date}</p>
+            ${isMyNote ? `<button onclick="deleteNote('${n.id}')"
+              title="Delete this note"
+              class="text-gray-300 hover:text-red-500 transition-colors" aria-label="Delete note">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>` : ''}
+          </div>
+        </div>
+        <p class="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">${escapeHtml(n.note)}</p>`;
+      list.appendChild(div);
+    });
+    list.style.display = '';
+  } catch {
+    document.getElementById('notes-loading').textContent = 'Failed to load notes.';
+  }
+}
+
+async function generateSOAPDraft() {
+  if (!currentSessId) return;
+  const loadingEl = document.getElementById('soap-loading');
+  const noteErr   = document.getElementById('note-error');
+  loadingEl.style.display = '';
+  noteErr.style.display   = 'none';
+  try {
+    const res  = await fetch(API.noteDraft(currentSessId), { method: 'POST', headers: authHeaders(), body: JSON.stringify({}) });
+    const data = await res.json();
+    if (res.ok && data.draft) {
+      // SOAP draft comes as a structured object — format it into the textarea
+      const draft = data.draft;
+      if (typeof draft === 'object') {
+        const parts = [];
+        if (draft.subjective)  parts.push(`S: ${draft.subjective}`);
+        if (draft.objective)   parts.push(`O: ${draft.objective}`);
+        if (draft.assessment)  parts.push(`A: ${draft.assessment}`);
+        if (draft.plan)        parts.push(`P: ${draft.plan}`);
+        document.getElementById('note-textarea').value = parts.join('\n\n');
+      } else {
+        document.getElementById('note-textarea').value = String(draft);
+      }
+    } else {
+      noteErr.textContent = data.error || 'Could not generate SOAP draft. Make sure the session has a clinical summary first.';
+      noteErr.style.display = '';
+    }
+  } catch {
+    noteErr.textContent = 'Network error. Could not generate SOAP draft.';
+    noteErr.style.display = '';
+  } finally {
+    loadingEl.style.display = 'none';
+  }
+}
+
+async function submitNote() {
+  const note = document.getElementById('note-textarea').value.trim();
+  if (!note) return;
+  document.getElementById('note-error').style.display = 'none';
+  try {
+    const res = await fetch(API.notes(currentSessId), {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ note }),
+    });
+    if (res.ok) {
+      document.getElementById('note-textarea').value = '';
+      loadedInner.delete('notes');
+      loadNotes();
+      loadedInner.add('notes');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      document.getElementById('note-error').textContent = err.note || err.error || 'Failed to save note.';
+      document.getElementById('note-error').style.display = '';
+    }
+  } catch {
+    document.getElementById('note-error').textContent = 'Network error.';
+    document.getElementById('note-error').style.display = '';
+  }
+}
+
+async function deleteNote(noteId) {
+  if (!currentSessId) return;
+  if (!confirm('Delete this note? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/doctor/patients/sessions/${currentSessId}/notes/${noteId}/`, {
+      method: 'DELETE', headers: authHeaders(),
+    });
+    if (res.ok || res.status === 204) {
+      document.getElementById(`note-card-${noteId}`)?.remove();
+      // Show empty state if no notes left
+      const list = document.getElementById('notes-list');
+      if (list && !list.children.length) {
+        list.style.display = 'none';
+        document.getElementById('notes-empty').style.display = '';
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      document.getElementById('note-error').textContent = err.error || err.detail || 'Could not delete note.';
+      document.getElementById('note-error').style.display = '';
+    }
+  } catch {
+    document.getElementById('note-error').textContent = 'Network error.';
+    document.getElementById('note-error').style.display = '';
+  }
+}
+
+// ── Prescriptions ─────────────────────────────────────────────────────────────
+async function loadPrescriptions() {
+  document.getElementById('rx-loading').style.display = '';
+  document.getElementById('rx-list').style.display   = 'none';
+  document.getElementById('rx-empty').style.display  = 'none';
+  try {
+    const res  = await fetch(API.prescriptions(currentSessId), { headers: authHeaders() });
+    const data = await res.json();
+    document.getElementById('rx-loading').style.display = 'none';
+    if (!data.length) { document.getElementById('rx-empty').style.display = ''; return; }
+    const list = document.getElementById('rx-list');
+    list.innerHTML = '';
+    data.forEach(rx => {
+      const date  = new Date(rx.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      const meds  = Array.isArray(rx.medications) ? rx.medications.join('\n') : String(rx.medications);
+      const medsDisplay = Array.isArray(rx.medications) ? rx.medications.join(', ') : String(rx.medications);
+      const fuDate = rx.follow_up_date
+        ? new Date(rx.follow_up_date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+        : null;
+      const isMyRx = rx.doctor_name === myDoctorName;
+      const div = document.createElement('div');
+      div.id        = `rx-card-${rx.id}`;
+      div.className = 'bg-white rounded-xl border border-gray-200 px-4 py-3';
+      div.innerHTML = `
+        <!-- View mode -->
+        <div id="rx-view-${rx.id}">
+          <div class="flex items-start justify-between gap-2 mb-1">
+            <p class="text-sm font-semibold text-gray-900">${escapeHtml(medsDisplay)}</p>
+            <div class="flex items-center gap-2 flex-shrink-0">
+              <p class="text-xs text-gray-400">Dr. ${escapeHtml(rx.doctor_name || '—')} · ${date}</p>
+              ${isMyRx ? `
+                <button onclick="editRx('${rx.id}')"
+                        title="Edit prescription"
+                        class="text-gray-300 hover:text-blue-500 transition-colors" aria-label="Edit">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                  </svg>
+                </button>
+                <button onclick="deleteRx('${rx.id}')"
+                        title="Delete prescription"
+                        class="text-gray-300 hover:text-red-500 transition-colors" aria-label="Delete">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>` : ''}
+            </div>
+          </div>
+          ${rx.instructions ? `<p class="text-xs text-gray-600 bg-gray-50 rounded-lg px-3 py-2 mt-1">${escapeHtml(rx.instructions)}</p>` : ''}
+          ${fuDate ? `<p class="text-xs text-amber-700 mt-1.5 font-medium">Follow-up: ${fuDate}</p>` : ''}
+        </div>
+        <!-- Edit mode (hidden by default) -->
+        <div id="rx-edit-${rx.id}" style="display:none" class="space-y-2.5">
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Medications (one per line)</label>
+            <textarea id="rx-edit-meds-${rx.id}" rows="3"
+                      class="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >${escapeHtml(meds)}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Instructions</label>
+            <textarea id="rx-edit-inst-${rx.id}" rows="2"
+                      class="w-full px-3 py-2 border border-gray-300 rounded-xl text-sm resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            >${escapeHtml(rx.instructions || '')}</textarea>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Follow-up Date</label>
+            <input id="rx-edit-fu-${rx.id}" type="date" value="${rx.follow_up_date || ''}"
+                   class="px-3 py-2 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"/>
+          </div>
+          <div id="rx-edit-err-${rx.id}" style="display:none"
+               class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"></div>
+          <div class="flex gap-2">
+            <button onclick="saveRx('${rx.id}')"
+                    class="px-3 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition-colors">
+              Save
+            </button>
+            <button onclick="cancelEditRx('${rx.id}')"
+                    class="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+              Cancel
+            </button>
+          </div>
+        </div>`;
+      list.appendChild(div);
+    });
+    list.style.display = '';
+  } catch {
+    document.getElementById('rx-loading').textContent = 'Failed to load prescriptions.';
+  }
+}
+
+function editRx(rxId) {
+  document.getElementById(`rx-view-${rxId}`).style.display = 'none';
+  document.getElementById(`rx-edit-${rxId}`).style.display = '';
+}
+
+function cancelEditRx(rxId) {
+  document.getElementById(`rx-edit-${rxId}`).style.display = 'none';
+  document.getElementById(`rx-view-${rxId}`).style.display = '';
+  document.getElementById(`rx-edit-err-${rxId}`).style.display = 'none';
+}
+
+async function saveRx(rxId) {
+  if (!currentSessId) return;
+  const medsText   = document.getElementById(`rx-edit-meds-${rxId}`).value.trim();
+  const errEl      = document.getElementById(`rx-edit-err-${rxId}`);
+  if (!medsText) {
+    errEl.textContent = 'Medications cannot be empty.';
+    errEl.style.display = '';
+    return;
+  }
+  const medications  = medsText.split('\n').map(s => s.trim()).filter(Boolean);
+  const instructions = document.getElementById(`rx-edit-inst-${rxId}`).value.trim();
+  const followup     = document.getElementById(`rx-edit-fu-${rxId}`).value || null;
+  errEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/doctor/patients/sessions/${currentSessId}/prescriptions/${rxId}/`, {
+      method: 'PATCH',
+      headers: authHeaders(),
+      body: JSON.stringify({ medications, instructions, follow_up_date: followup }),
+    });
+    if (res.ok) {
+      // Refresh prescription list
+      loadedInner.delete('prescriptions');
+      loadPrescriptions();
+      loadedInner.add('prescriptions');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      errEl.textContent = err.medications || err.error || Object.values(err).flat().join(' ') || 'Failed to save.';
+      errEl.style.display = '';
+    }
+  } catch {
+    errEl.textContent = 'Network error.';
+    errEl.style.display = '';
+  }
+}
+
+async function deleteRx(rxId) {
+  if (!currentSessId) return;
+  if (!confirm('Delete this prescription? This cannot be undone.')) return;
+  try {
+    const res = await fetch(`/api/doctor/patients/sessions/${currentSessId}/prescriptions/${rxId}/`, {
+      method: 'DELETE', headers: authHeaders(),
+    });
+    if (res.ok || res.status === 204) {
+      document.getElementById(`rx-card-${rxId}`)?.remove();
+      const list = document.getElementById('rx-list');
+      if (list && !list.children.length) {
+        list.style.display = 'none';
+        document.getElementById('rx-empty').style.display = '';
+      }
+    } else {
+      const err = await res.json().catch(() => ({}));
+      document.getElementById('rx-error').textContent = err.error || err.detail || 'Could not delete prescription.';
+      document.getElementById('rx-error').style.display = '';
+    }
+  } catch {
+    document.getElementById('rx-error').textContent = 'Network error.';
+    document.getElementById('rx-error').style.display = '';
+  }
+}
+
+async function checkDrugInteractions() {
+  const raw  = document.getElementById('drug-check-input').value.trim();
+  if (!raw) return;
+  const meds = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (!meds.length) return;
+  const resultEl = document.getElementById('drug-result');
+  resultEl.textContent = 'Checking…';
+  resultEl.style.display = '';
+  try {
+    const res  = await fetch(API.drugCheck(currentSessId), {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ medications: meds }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      if (data.interactions_found !== undefined) {
+        const safe  = data.safe_to_prescribe;
+        const found = data.interactions_found || [];
+        let out = safe
+          ? '✓ No significant interactions found. Safe to prescribe.\n'
+          : '⚠ Interactions detected — review before prescribing.\n';
+        found.forEach(i => {
+          out += `\n• ${i.drugs.join(' + ')} [${i.severity}]\n  ${i.explanation}`;
+        });
+        if (data.caution) out += `\n\n${data.caution}`;
+        resultEl.textContent = out;
+      } else {
+        resultEl.textContent = data.result || data.summary || JSON.stringify(data, null, 2);
+      }
+    } else {
+      resultEl.textContent = data.error || 'Failed to check interactions.';
+    }
+  } catch {
+    resultEl.textContent = 'Network error.';
+  }
+}
+
+async function submitPrescription() {
+  const medsText = document.getElementById('rx-meds').value.trim();
+  if (!medsText) {
+    document.getElementById('rx-error').textContent = 'Please enter at least one medication.';
+    document.getElementById('rx-error').style.display = '';
+    return;
+  }
+  const medications  = medsText.split('\n').map(s => s.trim()).filter(Boolean);
+  const instructions = document.getElementById('rx-instructions').value.trim();
+  const followup     = document.getElementById('rx-followup').value || null;
+  document.getElementById('rx-error').style.display = 'none';
+
+  const payload = { medications, instructions: instructions || '', follow_up_date: followup };
+  try {
+    const res = await fetch(API.prescriptions(currentSessId), {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      document.getElementById('rx-meds').value         = '';
+      document.getElementById('rx-instructions').value = '';
+      document.getElementById('rx-followup').value     = '';
+      loadedInner.delete('prescriptions');
+      loadPrescriptions();
+      loadedInner.add('prescriptions');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      const msg = err.medications || err.error || Object.values(err).flat().join(' ') || 'Failed to issue prescription.';
+      document.getElementById('rx-error').textContent = Array.isArray(msg) ? msg.join(' ') : msg;
+      document.getElementById('rx-error').style.display = '';
+    }
+  } catch {
+    document.getElementById('rx-error').textContent = 'Network error.';
+    document.getElementById('rx-error').style.display = '';
+  }
+}
+
+// ── AI Tools ──────────────────────────────────────────────────────────────────
+async function generateDiagnosis() {
+  const loadingEl = document.getElementById('diag-loading');
+  const resultEl  = document.getElementById('diag-result');
+  loadingEl.style.display = '';
+  resultEl.style.display  = 'none';
+  try {
+    const res  = await fetch(API.aiDiagnosis(currentSessId), {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({}),
+    });
+    const data = await res.json();
+    loadingEl.style.display = 'none';
+    if (res.ok) {
+      resultEl.innerHTML = renderDiagnosisContent(data.content);
+      resultEl.style.display = '';
+    } else {
+      resultEl.innerHTML = `<p class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">${escapeHtml(data.error || 'Failed to generate diagnosis. Ensure the session has messages first.')}</p>`;
+      resultEl.style.display = '';
+    }
+  } catch {
+    loadingEl.style.display = 'none';
+    resultEl.innerHTML = `<p class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Network error. Please try again.</p>`;
+    resultEl.style.display = '';
+  }
+}
+
+function renderDiagnosisContent(content) {
+  // content = {differentials: [{condition, likelihood, reasoning}], recommended_workup: [...], caution: str}
+  if (!content || typeof content !== 'object') {
+    return `<pre class="text-xs text-gray-700 whitespace-pre-wrap">${escapeHtml(JSON.stringify(content, null, 2))}</pre>`;
+  }
+
+  const LIKELIHOOD_COLOR = { high: 'bg-red-100 text-red-700', medium: 'bg-amber-100 text-amber-700', low: 'bg-gray-100 text-gray-600' };
+
+  let html = '';
+
+  // Differentials
+  const diffs = content.differentials || [];
+  if (diffs.length) {
+    html += '<div class="space-y-2 mb-4">';
+    html += '<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Differential Diagnoses</p>';
+    diffs.forEach((d, i) => {
+      const lColor = LIKELIHOOD_COLOR[(d.likelihood || '').toLowerCase()] || 'bg-gray-100 text-gray-600';
+      html += `
+        <div class="bg-white border border-gray-100 rounded-xl px-4 py-3">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-bold text-gray-500 w-5 flex-shrink-0">${i + 1}.</span>
+            <p class="text-sm font-semibold text-gray-900 flex-1">${escapeHtml(d.condition || '—')}</p>
+            ${d.likelihood ? `<span class="text-xs font-semibold px-2 py-0.5 rounded-full capitalize ${lColor}">${escapeHtml(d.likelihood)}</span>` : ''}
+          </div>
+          ${d.reasoning ? `<p class="text-xs text-gray-600 ml-5 leading-relaxed">${escapeHtml(d.reasoning)}</p>` : ''}
+        </div>`;
+    });
+    html += '</div>';
+  }
+
+  // Recommended workup
+  const workup = content.recommended_workup || [];
+  if (workup.length) {
+    html += '<div class="mb-4">';
+    html += '<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Recommended Workup</p>';
+    html += '<ul class="text-sm text-gray-700 list-disc list-inside space-y-0.5 bg-white border border-gray-100 rounded-xl px-4 py-3">';
+    workup.forEach(w => { html += `<li>${escapeHtml(String(w))}</li>`; });
+    html += '</ul></div>';
+  }
+
+  // Caution
+  if (content.caution) {
+    html += `
+      <div class="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+        <p class="text-xs font-semibold text-amber-700 mb-1">⚠ Clinical Caution</p>
+        <p class="text-xs text-amber-900 leading-relaxed">${escapeHtml(content.caution)}</p>
+      </div>`;
+  }
+
+  return html || `<p class="text-sm text-gray-400">No structured content available.</p>`;
+}
+
+async function loadCrossSummary() {
+  if (!currentPatientId) {
+    const resultEl = document.getElementById('cross-result');
+    resultEl.innerHTML = '<p class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Patient ID not available. Please re-open the session and try again.</p>';
+    resultEl.style.display = '';
+    return;
+  }
+  const loadingEl = document.getElementById('cross-loading');
+  const resultEl  = document.getElementById('cross-result');
+  loadingEl.style.display = '';
+  resultEl.style.display  = 'none';
+  try {
+    const res  = await fetch(API.crossSummary(currentPatientId), { headers: authHeaders() });
+    const data = await res.json();
+    loadingEl.style.display = 'none';
+    if (!res.ok) {
+      resultEl.innerHTML = `<p class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">${escapeHtml(data.error || 'Failed to load patient history.')}</p>`;
+      resultEl.style.display = '';
+      return;
+    }
+
+    resultEl.innerHTML = '';
+
+    // Header stats
+    const header = document.createElement('div');
+    header.className = 'bg-violet-50 border border-violet-200 rounded-xl p-4';
+    header.innerHTML = `
+      <p class="text-sm font-bold text-violet-900 mb-1">${escapeHtml(data.patient_name)}</p>
+      <p class="text-xs text-violet-700">${data.session_count} session${data.session_count !== 1 ? 's' : ''} with summaries</p>
+      ${data.date_range ? `<p class="text-xs text-violet-600 mt-0.5">
+        ${new Date(data.date_range.from).toLocaleDateString('en-GB')} – ${new Date(data.date_range.to).toLocaleDateString('en-GB')}
+      </p>` : ''}`;
+    resultEl.appendChild(header);
+
+    // Trend analysis
+    if (data.trend_analysis) {
+      const trend = document.createElement('div');
+      trend.className = 'bg-white rounded-xl border border-gray-200 p-4';
+      trend.innerHTML = `
+        <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Trend Analysis</p>
+        <p class="text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">${escapeHtml(data.trend_analysis)}</p>`;
+      resultEl.appendChild(trend);
+    }
+
+    // Session timeline
+    if (data.sessions && data.sessions.length) {
+      const timeline = document.createElement('div');
+      timeline.className = 'space-y-2';
+      timeline.innerHTML = `<p class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Session Timeline</p>`;
+      data.sessions.forEach(s => {
+        const dateStr = new Date(s.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        const row = document.createElement('div');
+        row.className = 'bg-gray-50 rounded-lg px-3 py-2.5';
+        row.innerHTML = `
+          <div class="flex items-center gap-2 mb-0.5">
+            <span class="text-xs text-gray-400">${dateStr}</span>
+            ${s.risk_level ? `<span class="text-xs font-semibold px-1.5 py-0.5 rounded-md capitalize ${RISK_COLOR[s.risk_level] || ''}">${s.risk_level}</span>` : ''}
+          </div>
+          <p class="text-xs font-medium text-gray-700">${escapeHtml(s.chief_complaint || '—')}</p>
+          ${s.recommended_action ? `<p class="text-xs text-gray-500 mt-0.5">${escapeHtml(s.recommended_action)}</p>` : ''}`;
+        timeline.appendChild(row);
+      });
+      resultEl.appendChild(timeline);
+    }
+
+    resultEl.style.display = '';
+  } catch {
+    loadingEl.style.display = 'none';
+    resultEl.innerHTML = `<p class="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">Network error. Please try again.</p>`;
+    resultEl.style.display = '';
+  }
+}
+
+// ── Appointments ──────────────────────────────────────────────────────────────
+async function loadAppointments() {
+  const aptStatus = document.getElementById('filter-apt-status').value;
+  let url = API.appointments + '?';
+  if (aptStatus) url += `status=${aptStatus}&`;
+
+  const list = document.getElementById('appointments-list');
+  list.innerHTML = '<p class="text-xs text-gray-400 px-2 py-2">Loading…</p>';
+
+  try {
+    const res  = await fetch(url, { headers: authHeaders() });
+    const data = await res.json();
+
+    if (!Array.isArray(data) || !data.length) {
+      list.innerHTML = '<p class="text-xs text-gray-400 px-2 py-3">No appointments found.</p>';
+      return;
+    }
+
+    list.innerHTML = '';
+    data.forEach(apt => {
+      const btn = document.createElement('button');
+      btn.className = 'sess-item' + (apt.id === currentAptId ? ' active' : '');
+      btn.onclick   = () => openAppointment(apt);
+
+      const date    = new Date(apt.scheduled_at).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+      const time    = new Date(apt.scheduled_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      const color   = APT_STATUS_COLOR[apt.status] || 'bg-gray-100 text-gray-600';
+
+      btn.innerHTML = `
+        <div class="flex items-center justify-between gap-2 mb-0.5">
+          <span class="text-xs font-semibold text-gray-800 truncate">${escapeHtml(apt.patient_name)}</span>
+          <span class="text-xs flex-shrink-0 font-semibold px-1.5 py-0.5 rounded-md capitalize ${color}">${apt.status}</span>
+        </div>
+        <p class="text-xs text-gray-400 pl-0">${date} at ${time}</p>
+        ${apt.reason ? `<p class="text-xs text-gray-400 truncate mt-0.5">${escapeHtml(apt.reason)}</p>` : ''}`;
+      list.appendChild(btn);
+    });
+  } catch {
+    list.innerHTML = '<p class="text-xs text-red-400 px-2 py-2">Failed to load appointments.</p>';
+  }
+}
+
+function openAppointment(apt) {
+  currentAptId = apt.id;
+  document.getElementById('ws-empty').style.display       = 'none';
+  document.getElementById('ws-session').style.display     = 'none';
+  document.getElementById('ws-appointment').style.display = '';
+
+  const date  = new Date(apt.scheduled_at).toLocaleString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const color = APT_STATUS_COLOR[apt.status] || 'bg-gray-100 text-gray-600';
+
+  document.getElementById('apt-ws-patient').textContent = apt.patient_name + ` (${apt.patient_age} yrs)`;
+  document.getElementById('apt-ws-date').textContent    = date;
+  document.getElementById('apt-ws-reason').textContent  = apt.reason || '—';
+  document.getElementById('apt-notes-input').value      = apt.doctor_notes || '';
+
+  const statusEl = document.getElementById('apt-ws-status');
+  statusEl.textContent = apt.status;
+  statusEl.className   = `text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${color}`;
+
+  renderAppointmentActions(apt);
+}
+
+function renderAppointmentActions(apt) {
+  const container = document.getElementById('apt-actions');
+  container.innerHTML = '';
+  document.getElementById('apt-action-error').style.display = 'none';
+
+  const TRANSITIONS = {
+    pending:   [{ label: 'Confirm', next: 'confirmed', color: 'bg-emerald-600 hover:bg-emerald-700 text-white' },
+                { label: 'Cancel',  next: 'cancelled', color: 'bg-red-600 hover:bg-red-700 text-white' }],
+    confirmed: [{ label: 'Mark Completed', next: 'completed', color: 'bg-emerald-600 hover:bg-emerald-700 text-white' },
+                { label: 'Cancel',         next: 'cancelled', color: 'bg-red-600 hover:bg-red-700 text-white' }],
+  };
+
+  const actions = TRANSITIONS[apt.status] || [];
+  actions.forEach(a => {
+    const btn = document.createElement('button');
+    btn.className = `px-4 py-2 text-sm font-semibold rounded-xl transition-colors ${a.color}`;
+    btn.textContent = a.label;
+    btn.onclick = () => updateAppointment(apt.id, a.next);
+    container.appendChild(btn);
+  });
+
+  // Always show "Save notes"
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'px-4 py-2 text-sm font-semibold rounded-xl border border-gray-200 text-gray-700 hover:bg-gray-50 transition-colors';
+  saveBtn.textContent = 'Save Notes';
+  saveBtn.onclick = () => updateAppointment(apt.id, null, true);
+  container.appendChild(saveBtn);
+}
+
+async function updateAppointment(aptId, newStatus, notesOnly = false) {
+  const notes   = document.getElementById('apt-notes-input').value.trim();
+  const payload = {};
+  if (newStatus)  payload.status       = newStatus;
+  if (notesOnly || notes) payload.doctor_notes = notes;
+
+  try {
+    const res  = await fetch(API.aptDetail(aptId), {
+      method: 'PATCH', headers: authHeaders(), body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      openAppointment(data);
+      loadAppointments();
+    } else {
+      document.getElementById('apt-action-error').textContent = data.error || 'Could not update appointment.';
+      document.getElementById('apt-action-error').style.display = '';
+    }
+  } catch {
+    document.getElementById('apt-action-error').textContent = 'Network error.';
+    document.getElementById('apt-action-error').style.display = '';
+  }
+}
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+function showPageError(msg) {
+  document.getElementById('page-loading').style.display  = 'none';
+  document.getElementById('page-error-msg').textContent  = msg;
+  document.getElementById('page-error').style.display    = '';
+}
+
+function clearAndRedirect() {
+  ['access_token','refresh_token','doctor_id','doctor_name','user_role'].forEach(k => localStorage.removeItem(k));
+  window.location.href = '{% url "doctor-login-page" %}';
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', boot);
+</script>
+{% endblock %}

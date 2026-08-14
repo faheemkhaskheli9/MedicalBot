@@ -1,22 +1,21 @@
 {% extends "base.html" %}
 
-{% block title %}Register — MedicalBot{% endblock %}
+{% block title %}Doctor Registration — MedicalBot{% endblock %}
 
 {% block content %}
 <div class="min-h-[calc(100vh-4rem)] bg-gray-50 flex items-center justify-center py-12 px-4">
   <div class="w-full max-w-lg">
 
-    <!-- Card -->
-    <div id="form-card" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
       <div class="text-center mb-8">
-        <div class="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-          <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="w-12 h-12 bg-emerald-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
           </svg>
         </div>
-        <h1 class="text-2xl font-bold text-gray-900">Create your account</h1>
-        <p class="text-sm text-gray-500 mt-1">Patient Portal registration</p>
+        <h1 class="text-2xl font-bold text-gray-900">Create Doctor Account</h1>
+        <p class="text-sm text-gray-500 mt-1">Doctor Portal registration</p>
       </div>
 
       <!-- Error banner -->
@@ -29,45 +28,42 @@
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1" for="name">Full Name</label>
           <input id="name" name="name" type="text" autocomplete="name" required
-                 placeholder="e.g. Ali Khan"
-                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
+                 placeholder="e.g. Dr. Sara Ahmed"
+                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
         </div>
 
-        <!-- Age + Gender row -->
+        <!-- Specialization + License row -->
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1" for="age">Age</label>
-            <input id="age" name="age" type="number" min="1" max="150" required
-                   placeholder="e.g. 30"
-                   class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1" for="gender">Gender</label>
-            <select id="gender" name="gender" required
-                    class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-              <option value="">Select…</option>
-              <option value="male">Male</option>
-              <option value="female">Female</option>
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="specialization">Specialization</label>
+            <select id="specialization" name="specialization" required
+                    class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent">
+              <option value="general_practice">General Practice</option>
+              <option value="cardiology">Cardiology</option>
+              <option value="dermatology">Dermatology</option>
+              <option value="neurology">Neurology</option>
+              <option value="orthopedics">Orthopedics</option>
+              <option value="pediatrics">Pediatrics</option>
+              <option value="emergency_medicine">Emergency Medicine</option>
+              <option value="internal_medicine">Internal Medicine</option>
+              <option value="psychiatry">Psychiatry</option>
               <option value="other">Other</option>
-              <option value="prefer_not_to_say">Prefer not to say</option>
             </select>
           </div>
-        </div>
-
-        <!-- Phone -->
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1" for="phone">Phone Number</label>
-          <input id="phone" name="phone" type="tel" autocomplete="tel" required
-                 placeholder="e.g. 03001234567"
-                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1" for="license_number">License Number</label>
+            <input id="license_number" name="license_number" type="text" required
+                   placeholder="e.g. PMDC-12345"
+                   class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
+          </div>
         </div>
 
         <!-- Email -->
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1" for="email">Email Address</label>
           <input id="email" name="email" type="email" autocomplete="email" required
-                 placeholder="e.g. ali@example.com"
-                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
+                 placeholder="doctor@hospital.com"
+                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
         </div>
 
         <!-- Password -->
@@ -75,7 +71,7 @@
           <label class="block text-sm font-medium text-gray-700 mb-1" for="password">Password</label>
           <input id="password" name="password" type="password" autocomplete="new-password" required
                  placeholder="At least 8 characters"
-                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
+                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
         </div>
 
         <!-- Confirm Password -->
@@ -83,23 +79,21 @@
           <label class="block text-sm font-medium text-gray-700 mb-1" for="password_confirm">Confirm Password</label>
           <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required
                  placeholder="Re-enter your password"
-                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"/>
+                 class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"/>
           <p id="pw-hint" class="hidden mt-1 text-xs text-red-600">Passwords do not match.</p>
         </div>
 
-        <!-- Submit -->
         <button id="submit-btn" type="submit"
-                class="w-full py-3 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed">
-          Create Account
+                class="w-full py-3 bg-emerald-600 text-white font-semibold rounded-xl hover:bg-emerald-700 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed">
+          Create Doctor Account
         </button>
       </form>
 
       <p class="text-center text-sm text-gray-500 mt-6">
         Already have an account?
-        <a href="{% url 'patient-login-page' %}" class="text-blue-600 font-medium hover:underline">Log in</a>
+        <a href="{% url 'doctor-login-page' %}" class="text-emerald-600 font-medium hover:underline">Log in</a>
       </p>
     </div>
-
 
   </div>
 </div>
@@ -107,12 +101,12 @@
 
 {% block extra_js %}
 <script>
-  if (localStorage.getItem('access_token')) {
-    window.location.replace('/patient/profile/');
+  if (localStorage.getItem('access_token') && localStorage.getItem('user_role') === 'doctor') {
+    window.location.replace('/doctor/dashboard/');
   }
 
-  const form = document.getElementById('register-form');
-  const btn  = document.getElementById('submit-btn');
+  const form        = document.getElementById('register-form');
+  const btn         = document.getElementById('submit-btn');
   const errorBanner = document.getElementById('error-banner');
   const errorText   = document.getElementById('error-text');
   const pwField     = document.getElementById('password');
@@ -133,12 +127,11 @@
     errorText.textContent = msg;
     errorBanner.classList.remove('hidden');
     btn.disabled = false;
-    btn.textContent = 'Create Account';
+    btn.textContent = 'Create Doctor Account';
   }
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    // Guard: prevent submit if passwords don't match
     if (pwField.value !== pwConfirm.value) {
       checkPasswordMatch();
       return;
@@ -147,19 +140,18 @@
     btn.disabled = true;
     btn.textContent = 'Creating account…';
 
-
+    const name = document.getElementById('name').value.trim();
     const payload = {
-      name:             document.getElementById('name').value.trim(),
-      age:              parseInt(document.getElementById('age').value, 10),
-      gender:           document.getElementById('gender').value,
-      phone:            document.getElementById('phone').value.trim(),
+      name,
+      specialization:   document.getElementById('specialization').value,
+      license_number:   document.getElementById('license_number').value.trim(),
       email:            document.getElementById('email').value.trim(),
       password:         document.getElementById('password').value,
       password_confirm: document.getElementById('password_confirm').value,
     };
 
     try {
-      const res = await fetch('/api/patient/register/', {
+      const res  = await fetch('/api/doctor/register/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -174,11 +166,11 @@
 
       localStorage.setItem('access_token',  data.tokens.access);
       localStorage.setItem('refresh_token', data.tokens.refresh);
-      localStorage.setItem('patient_id',    data.patient_id);
-      localStorage.setItem('patient_name',  payload.name);
-      localStorage.setItem('user_role',     'patient');
+      localStorage.setItem('doctor_id',     data.doctor_id);
+      localStorage.setItem('doctor_name',   name);
+      localStorage.setItem('user_role',     'doctor');
 
-      window.location.href = '/patient/profile/';
+      window.location.href = '/doctor/dashboard/';
 
     } catch {
       showError('Network error. Please try again.');

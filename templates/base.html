@@ -55,15 +55,15 @@
              class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
             Home
           </a>
-          <a href="#patient"
+          <a id="nav-link-patient" href="{% url 'patient-login-page' %}"
              class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
             Patient Portal
           </a>
-          <a href="#doctor"
+          <a id="nav-link-doctor" href="{% url 'doctor-login-page' %}"
              class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
             Doctor Dashboard
           </a>
-          <a href="#admin"
+          <a href="/admin/"
              class="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
             Admin Panel
           </a>
@@ -81,8 +81,8 @@
           </a>
         </div>
 
-        <!-- Auth: logged in -->
-        <div id="nav-user" style="display:none" class="items-center gap-3">
+        <!-- Auth: patient logged in -->
+        <div id="nav-patient" style="display:none" class="items-center gap-3">
           <a href="{% url 'patient-chat-page' %}"
              class="px-3 py-1.5 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors flex items-center gap-1.5">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -98,7 +98,29 @@
             </div>
             <span id="nav-name" class="text-sm font-medium text-gray-700"></span>
           </a>
-          <button onclick="logoutPatient()"
+          <button onclick="logout()"
+                  class="px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+            Log Out
+          </button>
+        </div>
+
+        <!-- Auth: doctor logged in -->
+        <div id="nav-doctor" style="display:none" class="items-center gap-3">
+          <a href="{% url 'doctor-dashboard-page' %}"
+             class="px-3 py-1.5 text-sm font-medium text-emerald-600 border border-emerald-200 rounded-lg hover:bg-emerald-50 transition-colors flex items-center gap-1.5">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+            </svg>
+            Dashboard
+          </a>
+          <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg">
+            <div id="nav-doc-avatar"
+                 class="w-7 h-7 rounded-lg bg-emerald-600 text-white text-xs font-bold flex items-center justify-center">
+            </div>
+            <span id="nav-doc-name" class="text-sm font-medium text-gray-700"></span>
+          </div>
+          <button onclick="logout()"
                   class="px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
             Log Out
           </button>
@@ -129,15 +151,15 @@
            class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
           Home
         </a>
-        <a href="#patient"
+        <a id="mob-link-patient" href="{% url 'patient-login-page' %}"
            class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
           Patient Portal
         </a>
-        <a href="#doctor"
+        <a id="mob-link-doctor" href="{% url 'doctor-login-page' %}"
            class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
           Doctor Dashboard
         </a>
-        <a href="#admin"
+        <a href="/admin/"
            class="block px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:text-blue-600 hover:bg-blue-50 transition-colors">
           Admin Panel
         </a>
@@ -153,8 +175,8 @@
           </a>
         </div>
 
-        <!-- Mobile auth: logged in -->
-        <div id="mob-user" style="display:none" class="pt-2 border-t border-gray-100 gap-2 flex flex-wrap">
+        <!-- Mobile auth: patient logged in -->
+        <div id="mob-patient" style="display:none" class="pt-2 border-t border-gray-100 gap-2 flex flex-wrap">
           <a href="{% url 'patient-chat-page' %}"
              class="flex-1 text-center px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors">
             Chat
@@ -163,7 +185,19 @@
              class="flex-1 text-center px-4 py-2 text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors">
             My Profile
           </a>
-          <button onclick="logoutPatient()"
+          <button onclick="logout()"
+                  class="flex-1 px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
+            Log Out
+          </button>
+        </div>
+
+        <!-- Mobile auth: doctor logged in -->
+        <div id="mob-doctor" style="display:none" class="pt-2 border-t border-gray-100 gap-2 flex flex-wrap">
+          <a href="{% url 'doctor-dashboard-page' %}"
+             class="flex-1 text-center px-4 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 transition-colors">
+            Dashboard
+          </a>
+          <button onclick="logout()"
                   class="flex-1 px-4 py-2 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors">
             Log Out
           </button>
@@ -210,9 +244,9 @@
         <div>
           <h4 class="text-sm font-semibold text-gray-700 mb-3">Portals</h4>
           <ul class="space-y-2 text-sm text-gray-500">
-            <li><a href="#patient" class="hover:text-blue-600 transition-colors">Patient Portal</a></li>
-            <li><a href="#doctor" class="hover:text-blue-600 transition-colors">Doctor Dashboard</a></li>
-            <li><a href="#admin" class="hover:text-blue-600 transition-colors">Admin Panel</a></li>
+            <li><a href="{% url 'patient-login-page' %}" class="hover:text-blue-600 transition-colors">Patient Portal</a></li>
+            <li><a href="{% url 'doctor-login-page' %}" class="hover:text-blue-600 transition-colors">Doctor Dashboard</a></li>
+            <li><a href="/admin/" class="hover:text-blue-600 transition-colors">Admin Panel</a></li>
           </ul>
         </div>
         <div>
@@ -245,25 +279,40 @@
 
       // Auth state
       const token = localStorage.getItem('access_token');
-      const name  = localStorage.getItem('patient_name') || 'Patient';
+      const role  = localStorage.getItem('user_role');
 
-      if (token) {
+      if (token && role === 'doctor') {
+        const name     = localStorage.getItem('doctor_name') || 'Doctor';
         const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
-        document.getElementById('nav-avatar').textContent = initials;
-        document.getElementById('nav-name').textContent   = name.split(' ')[0];
-        document.getElementById('nav-user').style.display = 'flex';
-        document.getElementById('mob-user').style.display = 'flex';
+        document.getElementById('nav-doc-avatar').textContent = initials;
+        document.getElementById('nav-doc-name').textContent   = name.split(' ')[0];
+        document.getElementById('nav-doctor').style.display   = 'flex';
+        document.getElementById('mob-doctor').style.display   = 'flex';
+        // Point nav links to the correct authenticated pages
+        document.getElementById('nav-link-doctor').href = '/doctor/dashboard/';
+        document.getElementById('mob-link-doctor').href = '/doctor/dashboard/';
+      } else if (token) {
+        const name     = localStorage.getItem('patient_name') || 'Patient';
+        const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+        document.getElementById('nav-avatar').textContent    = initials;
+        document.getElementById('nav-name').textContent      = name.split(' ')[0];
+        document.getElementById('nav-patient').style.display = 'flex';
+        document.getElementById('mob-patient').style.display = 'flex';
+        // Point nav links to the correct authenticated pages
+        document.getElementById('nav-link-patient').href = '/patient/profile/';
+        document.getElementById('mob-link-patient').href = '/patient/profile/';
       } else {
         document.getElementById('nav-guest').style.display = 'flex';
         document.getElementById('mob-guest').style.display = 'flex';
       }
     })();
 
-    async function logoutPatient() {
+    async function logout() {
+      const role         = localStorage.getItem('user_role');
       const refreshToken = localStorage.getItem('refresh_token');
       const accessToken  = localStorage.getItem('access_token');
       try {
-        if (refreshToken && accessToken) {
+        if (role === 'patient' && refreshToken && accessToken) {
           await fetch('/api/patient/logout/', {
             method: 'POST',
             headers: {
@@ -274,12 +323,13 @@
           });
         }
       } catch { /* ignore network errors — still clear local state */ }
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
-      localStorage.removeItem('patient_id');
-      localStorage.removeItem('patient_name');
+      ['access_token', 'refresh_token', 'patient_id', 'patient_name',
+       'doctor_id', 'doctor_name', 'user_role'].forEach(k => localStorage.removeItem(k));
       window.location.href = '/';
     }
+
+    // Keep backward compat alias used in patient templates
+    function logoutPatient() { logout(); }
   </script>
   {% block extra_js %}{% endblock %}
 </body>
