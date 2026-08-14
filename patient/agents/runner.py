@@ -12,6 +12,7 @@ def run_triage_graph(
     intent: str,
     patient_name: str,
     session_metadata: dict,
+    patient_id: str = "",
 ) -> dict:
     """
     Run the LangGraph triage orchestrator for a single patient message.
@@ -28,6 +29,7 @@ def run_triage_graph(
         "intent": intent,
         "patient_name": patient_name,
         "session_metadata": session_metadata,
+        "patient_id": patient_id,
         "bot_response": "",
         "agent_used": "",
         "risk_level": None,

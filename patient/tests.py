@@ -649,17 +649,34 @@ class TriageOrchestatorTests(APITestCase):
         from patient.agents.nodes import route_by_intent
         from patient.agents.state import TriageState
 
-        for intent in ("lab_report_question", "billing_question", "hospital_info"):
+        for intent in ("billing_question", "hospital_info"):
             state: TriageState = {
                 "conversation_history": [],
                 "intent": intent,
                 "patient_name": "Test",
                 "session_metadata": {},
+                "patient_id": "",
                 "bot_response": "",
                 "agent_used": "",
                 "risk_level": None,
             }
             self.assertEqual(route_by_intent(state), "general", f"Failed for intent: {intent}")
+
+    def test_graph_routing_lab_report(self):
+        from patient.agents.nodes import route_by_intent
+        from patient.agents.state import TriageState
+
+        state: TriageState = {
+            "conversation_history": [],
+            "intent": "lab_report_question",
+            "patient_name": "Test",
+            "session_metadata": {},
+            "patient_id": "",
+            "bot_response": "",
+            "agent_used": "",
+            "risk_level": None,
+        }
+        self.assertEqual(route_by_intent(state), "lab_report")
 
 
 SUMMARY_URL_TMPL = "/api/patient/chat/sessions/{}/summary/"
