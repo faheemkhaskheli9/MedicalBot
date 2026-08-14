@@ -649,17 +649,34 @@ class TriageOrchestatorTests(APITestCase):
         from patient.agents.nodes import route_by_intent
         from patient.agents.state import TriageState
 
-        for intent in ("lab_report_question", "billing_question", "hospital_info"):
+        for intent in ("billing_question", "hospital_info"):
             state: TriageState = {
                 "conversation_history": [],
                 "intent": intent,
                 "patient_name": "Test",
                 "session_metadata": {},
+                "patient_id": "",
                 "bot_response": "",
                 "agent_used": "",
                 "risk_level": None,
             }
             self.assertEqual(route_by_intent(state), "general", f"Failed for intent: {intent}")
+
+    def test_graph_routing_lab_report(self):
+        from patient.agents.nodes import route_by_intent
+        from patient.agents.state import TriageState
+
+        state: TriageState = {
+            "conversation_history": [],
+            "intent": "lab_report_question",
+            "patient_name": "Test",
+            "session_metadata": {},
+            "patient_id": "",
+            "bot_response": "",
+            "agent_used": "",
+            "risk_level": None,
+        }
+        self.assertEqual(route_by_intent(state), "lab_report")
 
 
 SUMMARY_URL_TMPL = "/api/patient/chat/sessions/{}/summary/"
@@ -1060,3 +1077,255 @@ class PatientPrescriptionTests(APITestCase):
         r = self.client.get(PATIENT_PRESCRIPTIONS_URL)
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.data, [])
+
+
+# ── New AI Feature Tests ───────────────────────────────────────────────────────
+
+RECOMMENDATIONS_URL_TMPL = "/api/patient/chat/sessions/{}/recommendations/"
+EXPLAIN_URL_TMPL = "/api/patient/prescriptions/{}/explain/"
+SYMPTOM_HISTORY_URL = "/api/patient/symptom-history/"
+
+_MOCK_RECOMMENDATIONS = {
+    "tests_recommended": ["CBC", "Blood glucose"],
+    "specialist_referral": "Endocrinologist",
+    "lifestyle_advice": "Low-sugar diet",
+    "urgency": "routine",
+    "red_flags_to_watch": ["persistent fatigue", "blurred vision"],
+}
+
+
+class ChatSessionRecommendationsTests(APITestCase):
+    """POST /api/patient/chat/sessions/<id>/recommendations/"""
+
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        sr = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+        self.url = RECOMMENDATIONS_URL_TMPL.format(self.session_id)
+
+    def _put_summary(self):
+        from patient.models import ChatSession
+        ChatSession.objects.filter(id=self.session_id).update(summary=_MOCK_SUMMARY)
+
+    def test_happy_path_returns_201(self):
+        self._put_summary()
+        with patch("patient.recommendations.generate_recommendations", return_value=_MOCK_RECOMMENDATIONS):
+            r = self.client.post(self.url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertIn("content", r.data)
+        self.assertIn("id", r.data)
+        self.assertIn("generated_at", r.data)
+
+    def test_content_matches_mock(self):
+        self._put_summary()
+        with patch("patient.recommendations.generate_recommendations", return_value=_MOCK_RECOMMENDATIONS):
+            r = self.client.post(self.url, format="json")
+        self.assertEqual(r.data["content"]["urgency"], "routine")
+        self.assertIn("CBC", r.data["content"]["tests_recommended"])
+
+    def test_no_summary_returns_400(self):
+        with patch(
+            "patient.recommendations.generate_recommendations",
+            side_effect=ValueError("Session has no clinical summary."),
+        ):
+            r = self.client.post(self.url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", r.data)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(self.url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_other_patients_session_returns_404(self):
+        self._put_summary()
+        other = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        with patch("patient.recommendations.generate_recommendations", return_value=_MOCK_RECOMMENDATIONS):
+            r = self.client.post(self.url, format="json")
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_second_call_updates_existing_recommendation(self):
+        self._put_summary()
+        with patch("patient.recommendations.generate_recommendations", return_value=_MOCK_RECOMMENDATIONS):
+            r1 = self.client.post(self.url, format="json")
+            r2 = self.client.post(self.url, format="json")
+        self.assertEqual(r1.data["id"], r2.data["id"])
+
+
+class PatientPrescriptionExplainTests(APITestCase):
+    """GET /api/patient/prescriptions/<id>/explain/"""
+
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+
+        pr = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = pr.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        sr = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+        rx_r = self.client.post(
+            f"/api/doctor/patients/sessions/{self.session_id}/prescriptions/",
+            {
+                "medications": [{"name": "Metformin", "dose": "500mg", "frequency": "2x daily"}],
+                "instructions": "Take with food.",
+            },
+            format="json",
+        )
+        self.prescription_id = rx_r.data["id"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def _explain_url(self):
+        return EXPLAIN_URL_TMPL.format(self.prescription_id)
+
+    def test_happy_path_returns_explanation(self):
+        with patch("patient.llm_client.get_llm_provider") as mock_provider:
+            mock_provider.return_value.complete.return_value = "Metformin helps control blood sugar."
+            r = self.client.get(self._explain_url())
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("explanation", r.data)
+        self.assertIsInstance(r.data["explanation"], str)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(self._explain_url())
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_other_patients_prescription_returns_404(self):
+        other = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        with patch("patient.llm_client.get_llm_provider") as mock_provider:
+            mock_provider.return_value.complete.return_value = "explanation"
+            r = self.client.get(self._explain_url())
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unknown_prescription_returns_404(self):
+        url = EXPLAIN_URL_TMPL.format("00000000-0000-0000-0000-000000000000")
+        with patch("patient.llm_client.get_llm_provider") as mock_provider:
+            mock_provider.return_value.complete.return_value = "explanation"
+            r = self.client.get(url)
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class PatientSymptomHistoryTests(APITestCase):
+    """GET /api/patient/symptom-history/"""
+
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def _create_session_with_summary(self, chief_complaint="Headache"):
+        from patient.models import ChatSession, Patient
+        patient = Patient.objects.get(email=VALID_PAYLOAD["email"])
+        summary = {**_MOCK_SUMMARY, "chief_complaint": chief_complaint}
+        session = ChatSession.objects.create(patient=patient, summary=summary, risk_level="routine")
+        return session
+
+    def test_empty_history_returns_empty_list(self):
+        r = self.client.get(SYMPTOM_HISTORY_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["timeline"], [])
+        self.assertIsNone(r.data["trend_analysis"])
+
+    def test_sessions_without_summary_excluded(self):
+        from patient.models import ChatSession, Patient
+        patient = Patient.objects.get(email=VALID_PAYLOAD["email"])
+        ChatSession.objects.create(patient=patient)
+        r = self.client.get(SYMPTOM_HISTORY_URL)
+        self.assertEqual(len(r.data["timeline"]), 0)
+
+    def test_sessions_with_summary_included(self):
+        self._create_session_with_summary("Chest pain")
+        r = self.client.get(SYMPTOM_HISTORY_URL)
+        self.assertEqual(len(r.data["timeline"]), 1)
+        entry = r.data["timeline"][0]
+        self.assertIn("session_id", entry)
+        self.assertIn("date", entry)
+        self.assertIn("risk_level", entry)
+        self.assertEqual(entry["chief_complaint"], "Chest pain")
+
+    def test_multiple_sessions_ordered_chronologically(self):
+        self._create_session_with_summary("Headache")
+        self._create_session_with_summary("Back pain")
+        r = self.client.get(SYMPTOM_HISTORY_URL)
+        self.assertEqual(len(r.data["timeline"]), 2)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(SYMPTOM_HISTORY_URL)
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_returns_only_own_sessions(self):
+        self._create_session_with_summary("Migraine")
+        other = {**VALID_PAYLOAD, "email": "other@example.com", "phone": "03009999999"}
+        r2 = self.client.post(REGISTER_URL, other, format="json")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {r2.data['tokens']['access']}")
+        r = self.client.get(SYMPTOM_HISTORY_URL)
+        self.assertEqual(len(r.data["timeline"]), 0)
+
+    def test_analyze_param_calls_llm_with_two_or_more_sessions(self):
+        self._create_session_with_summary("Headache")
+        self._create_session_with_summary("Dizziness")
+        with patch("patient.llm_client.get_llm_provider") as mock_provider:
+            mock_provider.return_value.complete.return_value = "Recurring headaches noted."
+            r = self.client.get(f"{SYMPTOM_HISTORY_URL}?analyze=true")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIsNotNone(r.data["trend_analysis"])
+
+
+class TriageMetadataFlagTests(APITestCase):
+    """Triage confidence and fallback flags in message metadata."""
+
+    def setUp(self):
+        r = self.client.post(REGISTER_URL, VALID_PAYLOAD, format="json")
+        self.token = r.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        sr = self.client.post(SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+        self.messages_url = f"{SESSIONS_URL}{self.session_id}/messages/"
+
+    def _send(self, emergency=None, intent=None, graph_result=None):
+        if emergency is None:
+            emergency = _NON_EMERGENCY
+        if intent is None:
+            intent = _SYMPTOM_INTENT
+        if graph_result is None:
+            graph_result = _MOCK_GRAPH_RESULT
+        with patch("patient.views.detect_emergency", return_value=emergency), \
+             patch("patient.views.detect_intent", return_value=intent), \
+             patch("patient.views.run_triage_graph", return_value=graph_result):
+            return self.client.post(self.messages_url, {"content": "I have a headache"}, format="json")
+
+    def test_fallback_flag_set_when_agent_is_fallback(self):
+        graph_result = {**_MOCK_GRAPH_RESULT, "agent_used": "fallback"}
+        r = self._send(graph_result=graph_result)
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        bot_msg = r.data["bot_message"]
+        self.assertTrue(bot_msg.get("metadata", {}).get("triage_fallback"))
+
+    def test_fallback_flag_absent_for_normal_agent(self):
+        r = self._send()
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        bot_msg = r.data["bot_message"]
+        self.assertFalse((bot_msg.get("metadata") or {}).get("triage_fallback", False))
+
+    def test_low_confidence_flag_set_when_confidence_below_threshold(self):
+        low_confidence_intent = {"intent": "symptom_check", "confidence": 0.5}
+        r = self._send(intent=low_confidence_intent)
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        patient_msg = r.data["patient_message"]
+        self.assertTrue(patient_msg.get("metadata", {}).get("low_confidence"))
+
+    def test_low_confidence_flag_absent_for_high_confidence(self):
+        r = self._send()
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        patient_msg = r.data["patient_message"]
+        self.assertFalse(patient_msg.get("metadata", {}).get("low_confidence", False))

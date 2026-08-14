@@ -1,7 +1,7 @@
 import json
 import logging
 
-from .openai_client import get_openai_client
+from .llm_client import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -65,16 +65,11 @@ def detect_emergency(message_content: str) -> dict:
     Falls back to keyword matching if OpenAI is unavailable to avoid missing emergencies.
     """
     try:
-        response = get_openai_client().chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": message_content},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
-        raw = json.loads(response.choices[0].message.content)
+        result = get_llm_provider().complete([
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": message_content},
+        ])
+        raw = json.loads(result)
         is_emergency = bool(raw.get("is_emergency", False))
         symptoms = raw.get("symptoms_detected", [])
         if not isinstance(symptoms, list):

@@ -1,7 +1,7 @@
 import json
 import logging
 
-from .openai_client import get_openai_client
+from .llm_client import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +35,11 @@ def detect_intent(message_content: str) -> dict:
     Falls back to {"intent": "unknown", "confidence": 0.0} on any error.
     """
     try:
-        response = get_openai_client().chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": message_content},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-        )
-        raw = json.loads(response.choices[0].message.content)
+        result = get_llm_provider().complete([
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": message_content},
+        ])
+        raw = json.loads(result)
         intent = raw.get("intent", "unknown")
         if intent not in SUPPORTED_INTENTS:
             intent = "unknown"

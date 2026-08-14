@@ -50,6 +50,7 @@ class ChatSession(models.Model):
     current_agent = models.CharField(max_length=100, null=True, blank=True)
     session_metadata = models.JSONField(default=dict, blank=True)
     summary = models.JSONField(null=True, blank=True)
+    conversation_summary = models.TextField(blank=True, default="")
     started_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)
 
@@ -74,6 +75,7 @@ class Message(models.Model):
     content = models.TextField()
     agent_name = models.CharField(max_length=100, null=True, blank=True)
     metadata = models.JSONField(null=True, blank=True)
+    is_summarized = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -158,3 +160,19 @@ class EmergencyEvent(models.Model):
 
     def __str__(self):
         return f"Emergency [{self.patient.name}] at {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class Recommendation(models.Model):
+    """AI-generated follow-up recommendations based on the session clinical summary."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.OneToOneField(
+        ChatSession, on_delete=models.CASCADE, related_name="recommendation"
+    )
+    content = models.JSONField()
+    generated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "recommendations"
+
+    def __str__(self):
+        return f"Recommendation for session {self.session_id}"

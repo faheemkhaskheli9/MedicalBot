@@ -2,7 +2,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from .openai_client import get_openai_client
+from .llm_client import get_llm_provider
 
 logger = logging.getLogger(__name__)
 
@@ -49,18 +49,12 @@ def generate_session_summary(conversation_history: list[dict], patient_name: str
         f"Conversation transcript:\n{transcript}"
     )
 
-    client = get_openai_client()
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        response_format={"type": "json_object"},
-        temperature=0,
-    )
+    result = get_llm_provider().complete([
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ])
 
-    raw = json.loads(response.choices[0].message.content)
+    raw = json.loads(result)
 
     # Normalise risk_level to valid choices
     valid_risk = {"routine", "urgent", "emergency"}
