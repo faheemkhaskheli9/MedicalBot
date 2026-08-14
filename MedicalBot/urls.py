@@ -17,6 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import include, path
 
+from doctor.views import doctor_dashboard_page, doctor_login_page, doctor_register_page
 from patient.views import chat_page, login_page, profile_page, register_page
 
 from .views import api_root, home
@@ -29,6 +30,10 @@ urlpatterns = [
     path("patient/login/", login_page, name="patient-login-page"),
     path("patient/profile/", profile_page, name="patient-profile-page"),
     path("patient/chat/", chat_page, name="patient-chat-page"),
+    # Doctor pages
+    path("doctor/login/", doctor_login_page, name="doctor-login-page"),
+    path("doctor/register/", doctor_register_page, name="doctor-register-page"),
+    path("doctor/dashboard/", doctor_dashboard_page, name="doctor-dashboard-page"),
     # API
     path("api/", api_root, name="api-root"),
     path("api/patient/", include("patient.urls")),
