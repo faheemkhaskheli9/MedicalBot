@@ -2,6 +2,9 @@ django
 djangorestframework
 djangorestframework-simplejwt
 django-cors-headers
+openai
+langgraph
+langchain-core
 pytest
 pytest-django
 pytest-cov

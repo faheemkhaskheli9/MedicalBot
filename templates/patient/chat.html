@@ -60,6 +60,14 @@
       </div>
       <div class="flex items-center gap-2">
         <span id="risk-badge" class="hidden text-xs font-semibold px-2.5 py-1 rounded-full"></span>
+        <button id="summary-btn"
+                class="hidden text-xs font-medium text-teal-700 hover:text-teal-800 border border-teal-200 hover:border-teal-300 bg-teal-50 hover:bg-teal-100 px-3 py-1.5 rounded-lg transition-colors">
+          Summary
+        </button>
+        <button id="recommendations-btn"
+                class="hidden text-xs font-medium text-violet-700 hover:text-violet-800 border border-violet-200 hover:border-violet-300 bg-violet-50 hover:bg-violet-100 px-3 py-1.5 rounded-lg transition-colors">
+          Recommendations
+        </button>
         <button id="end-session-btn"
                 class="hidden text-xs font-medium text-gray-500 hover:text-red-600 border border-gray-200 hover:border-red-200 px-3 py-1.5 rounded-lg transition-colors">
           End Session
@@ -176,9 +184,11 @@
 {% block extra_js %}
 <script>
 const API = {
-  sessions:     '/api/patient/chat/sessions/',
-  sessionDetail: id => `/api/patient/chat/sessions/${id}/`,
-  messages:     id => `/api/patient/chat/sessions/${id}/messages/`,
+  sessions:         '/api/patient/chat/sessions/',
+  sessionDetail:     id => `/api/patient/chat/sessions/${id}/`,
+  messages:          id => `/api/patient/chat/sessions/${id}/messages/`,
+  summary:           id => `/api/patient/chat/sessions/${id}/summary/`,
+  recommendations:   id => `/api/patient/chat/sessions/${id}/recommendations/`,
 };
 
 let currentSessionId = null;
@@ -274,6 +284,10 @@ function renderMessages(session) {
     container.innerHTML = session.messages.map(m => messageBubbleHTML(m)).join('');
   }
 
+  const summaryBtn = document.getElementById('summary-btn');
+  const recoBtn    = document.getElementById('recommendations-btn');
+  const patientMsgCount = session.messages.filter(m => m.sender === 'patient').length;
+
   if (session.status === 'active') {
     inputArea.classList.remove('hidden');
     inputArea.classList.add('flex');
@@ -286,25 +300,64 @@ function renderMessages(session) {
     endBtn.classList.add('hidden');
   }
 
+  if (patientMsgCount >= 2) {
+    summaryBtn.classList.remove('hidden');
+  } else {
+    summaryBtn.classList.add('hidden');
+  }
+
+  // Recommendations button: visible when session has a clinical summary
+  if (session.summary) {
+    recoBtn.classList.remove('hidden');
+  } else {
+    recoBtn.classList.add('hidden');
+  }
+
   scrollToBottom();
 }
 
 function messageBubbleHTML(msg) {
   const isPatient = msg.sender === 'patient';
   const time = new Date(msg.created_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  const content = escapeHtml(msg.content).replace(/\n/g, '<br>').replace(/\_(.*?)\_/g, '<em>$1</em>');
+  const content = renderMarkdown(msg.content);
+
+  const meta = msg.metadata || {};
+  const lowConfidence = meta.low_confidence === true;
+  const triageFallback = meta.triage_fallback === true;
 
   if (isPatient) {
     return `
       <div class="flex justify-end">
         <div class="max-w-[80%] sm:max-w-[70%]">
           <div class="bg-blue-600 text-white text-sm px-4 py-3 bubble-patient shadow-sm">${content}</div>
-          <p class="text-right text-xs text-gray-400 mt-1">${time}</p>
+          <p class="text-right text-xs text-gray-400 mt-1">
+            ${lowConfidence ? '<span class="text-amber-500 font-medium mr-2" title="Intent classified with low confidence">⚠ Low confidence</span>' : ''}
+            ${time}
+          </p>
         </div>
       </div>`;
   }
 
-  const agentLabel = msg.agent_name && msg.agent_name !== 'placeholder' ? msg.agent_name : 'MedicalBot';
+  const isEmergency = msg.agent_name === 'emergency_triage';
+  const agentLabel = formatAgentName(msg.agent_name);
+
+  if (isEmergency) {
+    return `
+      <div class="flex items-start gap-2">
+        <div class="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0 mt-1">
+          <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+          </svg>
+        </div>
+        <div class="max-w-[80%] sm:max-w-[70%]">
+          <p class="text-xs text-red-500 font-semibold mb-1">Emergency Triage</p>
+          <div class="bg-red-50 border-2 border-red-400 text-red-900 text-sm px-4 py-3 bubble-bot shadow-sm leading-relaxed font-medium">${content}</div>
+          <p class="text-xs text-gray-400 mt-1">${time}</p>
+        </div>
+      </div>`;
+  }
+
   return `
     <div class="flex items-end gap-2">
       <div class="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 mb-5">
@@ -314,7 +367,10 @@ function messageBubbleHTML(msg) {
         </svg>
       </div>
       <div class="max-w-[80%] sm:max-w-[70%]">
-        <p class="text-xs text-gray-400 mb-1">${agentLabel}</p>
+        <p class="text-xs text-gray-400 mb-1">
+          ${agentLabel}
+          ${triageFallback ? '<span class="ml-2 text-gray-400 font-normal" title="Used general AI fallback — intent unclear">ℹ Fallback</span>' : ''}
+        </p>
         <div class="bg-white border border-gray-200 text-gray-800 text-sm px-4 py-3 bubble-bot shadow-sm leading-relaxed">${content}</div>
         <p class="text-xs text-gray-400 mt-1">${time}</p>
       </div>
@@ -334,6 +390,7 @@ async function startNewSession() {
     currentSessionId = session.id;
     renderMessages(session);
     updateHeader(session);
+    document.getElementById('summary-btn').classList.add('hidden');
     loadSessions();
     closeMobileSidebar();
     document.getElementById('message-input')?.focus();
@@ -380,6 +437,7 @@ async function sendMessage() {
     const data = await res.json();
     replaceTempMessage(optimistic.id, data.patient_message);
     appendMessage(data.bot_message);
+    if (data.emergency) showEmergencyBanner();
     loadSessions();
   } catch {
     showChatError('Network error. Please try again.');
@@ -399,6 +457,14 @@ function appendMessage(msg) {
   el.innerHTML = messageBubbleHTML(msg);
   list.appendChild(el);
   scrollToBottom();
+  // Show summary button once the patient has sent at least 2 messages
+  if (msg.sender === 'patient') {
+    const patientCount = [...list.querySelectorAll('[data-msg-id]')]
+      .filter(el => el.querySelector('.bubble-patient')).length;
+    if (patientCount >= 2) {
+      document.getElementById('summary-btn').classList.remove('hidden');
+    }
+  }
 }
 
 function replaceTempMessage(tmpId, msg) {
@@ -452,6 +518,240 @@ function updateHeader(session) {
   }
 }
 
+// ── Request summary ────────────────────────────────────────────────────────────
+async function requestSummary() {
+  if (!currentSessionId) return;
+  const btn = document.getElementById('summary-btn');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  try {
+    const res = await fetch(API.summary(currentSessionId), {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showChatError(err.error || 'Could not generate summary.');
+      return;
+    }
+    const data = await res.json();
+    showSummaryModal(data.summary);
+    // Reveal Recommendations button now that a summary exists
+    document.getElementById('recommendations-btn').classList.remove('hidden');
+    loadSessions();
+  } catch {
+    showChatError('Network error. Could not generate summary.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Summary';
+  }
+}
+
+function showSummaryModal(summary) {
+  const existing = document.getElementById('summary-modal');
+  if (existing) existing.remove();
+
+  const riskColors = {
+    emergency: 'bg-red-100 text-red-800 border-red-300',
+    urgent:    'bg-amber-100 text-amber-800 border-amber-300',
+    routine:   'bg-green-100 text-green-800 border-green-300',
+  };
+  const riskClass = riskColors[summary.risk_level] || 'bg-gray-100 text-gray-800 border-gray-300';
+
+  const sd = summary.symptom_details || {};
+  const detailRows = [
+    ['Location',   sd.location],
+    ['Duration',   sd.duration],
+    ['Severity',   sd.severity != null ? `${sd.severity}/10` : null],
+    ['Character',  sd.character],
+  ].filter(([, v]) => v != null);
+
+  const listSection = (label, items) =>
+    items && items.length
+      ? `<div class="mt-2"><p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">${label}</p>
+         <ul class="text-sm text-gray-700 list-disc list-inside space-y-0.5">${items.map(i => `<li>${escapeHtml(String(i))}</li>`).join('')}</ul></div>`
+      : '';
+
+  const modal = document.createElement('div');
+  modal.id = 'summary-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50';
+  modal.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between p-5 border-b border-gray-100">
+        <h2 class="text-base font-bold text-gray-900">Clinical Summary</h2>
+        <button onclick="document.getElementById('summary-modal').remove()"
+                class="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-4">
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Chief Complaint</p>
+          <p class="text-sm text-gray-800">${escapeHtml(summary.chief_complaint || '')}</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Risk Level</span>
+          <span class="text-xs font-semibold px-2.5 py-1 rounded-full border ${riskClass} capitalize">
+            ${escapeHtml(summary.risk_level || 'unknown')}
+          </span>
+        </div>
+        ${detailRows.length ? `
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Symptom Details</p>
+          <div class="bg-gray-50 rounded-xl p-3 space-y-1">
+            ${detailRows.map(([k, v]) => `
+            <div class="flex gap-2 text-sm">
+              <span class="text-gray-500 w-24 flex-shrink-0">${k}</span>
+              <span class="text-gray-800">${escapeHtml(String(v))}</span>
+            </div>`).join('')}
+          </div>
+        </div>` : ''}
+        ${listSection('Associated Symptoms', sd.associated_symptoms)}
+        ${listSection('Aggravating Factors', sd.aggravating_factors)}
+        ${listSection('Relieving Factors', sd.relieving_factors)}
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Recommended Action</p>
+          <p class="text-sm text-gray-800">${escapeHtml(summary.recommended_action || '')}</p>
+        </div>
+        ${summary.notes_for_doctor ? `
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-3">
+          <p class="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-1">Notes for Doctor</p>
+          <p class="text-sm text-amber-900">${escapeHtml(summary.notes_for_doctor)}</p>
+        </div>` : ''}
+        <p class="text-xs text-gray-400">Generated ${new Date(summary.generated_at).toLocaleString()}</p>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function showEmergencyBanner() {
+  const existing = document.getElementById('emergency-banner');
+  if (existing) return;
+  const banner = document.createElement('div');
+  banner.id = 'emergency-banner';
+  banner.className = 'fixed top-16 inset-x-0 z-40 mx-4 mt-2';
+  banner.innerHTML = `
+    <div class="bg-red-600 text-white rounded-xl px-4 py-3 shadow-lg flex items-start gap-3 max-w-2xl mx-auto">
+      <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+      </svg>
+      <div class="flex-1">
+        <p class="font-bold text-sm">Emergency Detected — Call emergency services immediately (911 / 115)</p>
+        <p class="text-xs mt-0.5 text-red-100">Your message suggests a life-threatening situation. Do not wait for chat responses — call now.</p>
+      </div>
+      <button onclick="document.getElementById('emergency-banner').remove()"
+              class="text-red-200 hover:text-white flex-shrink-0 p-0.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>`;
+  document.body.appendChild(banner);
+}
+
+function formatAgentName(agentName) {
+  const map = {
+    'intake_agent':       'MedicalBot · Intake',
+    'appointment_agent':  'MedicalBot · Appointments',
+    'medication_agent':   'MedicalBot · Medication',
+    'lab_report_agent':   'MedicalBot · Lab Reports',
+    'general_agent':      'MedicalBot',
+    'emergency_triage':   'Emergency Triage',
+    'fallback':           'MedicalBot',
+  };
+  return map[agentName] || 'MedicalBot';
+}
+
+// ── Recommendations ────────────────────────────────────────────────────────────
+async function requestRecommendations() {
+  if (!currentSessionId) return;
+  const btn = document.getElementById('recommendations-btn');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  try {
+    const res = await fetch(API.recommendations(currentSessionId), {
+      method: 'POST',
+      headers: authHeaders(),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showChatError(err.error || 'Could not generate recommendations. Generate a clinical summary first.');
+      return;
+    }
+    const data = await res.json();
+    showRecommendationsModal(data.content || data);
+  } catch {
+    showChatError('Network error. Could not generate recommendations.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Recommendations';
+  }
+}
+
+function showRecommendationsModal(rec) {
+  const existing = document.getElementById('recommendations-modal');
+  if (existing) existing.remove();
+
+  const urgencyColors = {
+    emergency: 'bg-red-100 text-red-800 border-red-300',
+    urgent:    'bg-amber-100 text-amber-800 border-amber-300',
+    routine:   'bg-green-100 text-green-800 border-green-300',
+  };
+  const urgencyClass = urgencyColors[rec.urgency] || 'bg-gray-100 text-gray-700 border-gray-300';
+
+  const listSection = (label, items) =>
+    items && items.length
+      ? `<div>
+           <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">${label}</p>
+           <ul class="text-sm text-gray-700 list-disc list-inside space-y-0.5">
+             ${items.map(i => `<li>${escapeHtml(String(i))}</li>`).join('')}
+           </ul>
+         </div>`
+      : '';
+
+  const modal = document.createElement('div');
+  modal.id = 'recommendations-modal';
+  modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50';
+  modal.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between p-5 border-b border-gray-100">
+        <h2 class="text-base font-bold text-gray-900">AI Follow-Up Recommendations</h2>
+        <button onclick="document.getElementById('recommendations-modal').remove()"
+                class="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100 transition-colors">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="p-5 space-y-4">
+        ${rec.urgency ? `
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Urgency</span>
+          <span class="text-xs font-semibold px-2.5 py-1 rounded-full border ${urgencyClass} capitalize">${escapeHtml(rec.urgency)}</span>
+        </div>` : ''}
+        ${rec.specialist_referral ? `
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Specialist Referral</p>
+          <p class="text-sm text-gray-800 bg-blue-50 border border-blue-100 rounded-xl px-3 py-2">${escapeHtml(rec.specialist_referral)}</p>
+        </div>` : ''}
+        ${listSection('Recommended Tests', rec.tests_recommended)}
+        ${rec.lifestyle_advice ? `
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Lifestyle Advice</p>
+          <p class="text-sm text-gray-800">${escapeHtml(rec.lifestyle_advice)}</p>
+        </div>` : ''}
+        ${listSection('Red Flags to Watch', rec.red_flags_to_watch)}
+        <p class="text-xs text-gray-400">These are AI-generated suggestions. Always follow your doctor's advice.</p>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 function showMessagesLoading() {
   const list = document.getElementById('messages-list');
@@ -487,6 +787,15 @@ function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+/** Render a subset of markdown (bold, italic, dash-lists) safely after HTML-escaping */
+function renderMarkdown(text) {
+  return escapeHtml(text)
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')   // **bold**
+    .replace(/_(.*?)_/g, '<em>$1</em>')                  // _italic_
+    .replace(/(^|\n)- (.+)/g, '$1<span class="inline-block mr-1">•</span>$2') // - list items
+    .replace(/\n/g, '<br>');
+}
+
 function truncate(s, n) { return s.length > n ? s.slice(0, n) + '…' : s; }
 function capitalize(s)  { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 
@@ -507,6 +816,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('new-session-btn').addEventListener('click', startNewSession);
   document.getElementById('mobile-new-btn').addEventListener('click', startNewSession);
   document.getElementById('end-session-btn').addEventListener('click', endSession);
+  document.getElementById('summary-btn').addEventListener('click', requestSummary);
+  document.getElementById('recommendations-btn').addEventListener('click', requestRecommendations);
 
   document.getElementById('sidebar-toggle-btn').addEventListener('click', () => {
     document.getElementById('mobile-sidebar').classList.remove('hidden');
