@@ -103,6 +103,7 @@
       localStorage.setItem('access_token',  data.tokens.access);
       localStorage.setItem('refresh_token', data.tokens.refresh);
       localStorage.setItem('patient_id',    data.patient_id);
+      localStorage.setItem('user_role',     'patient');
 
       // Fetch profile to get the patient name for the navbar
       try {
