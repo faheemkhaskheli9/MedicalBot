@@ -11,3 +11,10 @@ plan.md
 
 # local database
 db.sqlite3
+
+# coverage / logs
+.coverage
+*.log
+
+# Claude Code local settings
+.claude/
