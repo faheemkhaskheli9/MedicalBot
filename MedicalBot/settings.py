@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'users',
     'patient',
     'doctor',
+    'agents',
     'llm_admin',
 ]
 
