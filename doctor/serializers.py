@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Doctor, DoctorNote, Prescription, SPECIALIZATION_CHOICES
+from .models import AIDiagnosisSuggestion, Doctor, DoctorNote, Prescription, SPECIALIZATION_CHOICES
 
 
 class DoctorRegisterSerializer(serializers.Serializer):
@@ -120,11 +120,21 @@ class DoctorAppointmentSerializer(serializers.Serializer):
         return obj.patient.age
 
 
+class AIDiagnosisSuggestionSerializer(serializers.ModelSerializer):
+    doctor_name = serializers.CharField(source="doctor.name", read_only=True)
+
+    class Meta:
+        model = AIDiagnosisSuggestion
+        fields = ["id", "doctor_name", "content", "generated_at"]
+        read_only_fields = fields
+
+
 class PatientSessionListSerializer(serializers.Serializer):
     """Lightweight view of a patient session for the doctor portal."""
     session_id = serializers.UUIDField(source="id")
     patient_name = serializers.SerializerMethodField()
     patient_age = serializers.SerializerMethodField()
+    patient_id = serializers.SerializerMethodField()
     status = serializers.CharField()
     risk_level = serializers.CharField(allow_null=True)
     started_at = serializers.DateTimeField()
@@ -139,6 +149,9 @@ class PatientSessionListSerializer(serializers.Serializer):
 
     def get_patient_age(self, obj):
         return obj.patient.age
+
+    def get_patient_id(self, obj):
+        return str(obj.patient.patient_id)
 
     def get_message_count(self, obj):
         return obj.messages.count()
@@ -160,6 +173,7 @@ class PatientSessionDetailSerializer(serializers.Serializer):
     session_id = serializers.UUIDField(source="id")
     patient_name = serializers.SerializerMethodField()
     patient_age = serializers.SerializerMethodField()
+    patient_id = serializers.SerializerMethodField()
     patient_gender = serializers.SerializerMethodField()
     patient_phone = serializers.SerializerMethodField()
     status = serializers.CharField()
@@ -176,6 +190,9 @@ class PatientSessionDetailSerializer(serializers.Serializer):
 
     def get_patient_age(self, obj):
         return obj.patient.age
+
+    def get_patient_id(self, obj):
+        return str(obj.patient.patient_id)
 
     def get_patient_gender(self, obj):
         return obj.patient.gender
