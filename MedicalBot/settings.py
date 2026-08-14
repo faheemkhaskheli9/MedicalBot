@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'users',
     'patient',
     'doctor',
+    'llm_admin',
 ]
 
 MIDDLEWARE = [
@@ -134,6 +135,14 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': '1000/day',
+        'patient_chat': '20/hour',
+        'patient_summary': '5/hour',
+    },
 }
 
 from datetime import timedelta
