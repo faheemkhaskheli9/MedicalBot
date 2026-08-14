@@ -740,3 +740,388 @@ class DoctorPrescriptionTests(APITestCase):
         create_r = self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
         for field in ["id", "doctor_name", "session_id", "medications", "instructions", "follow_up_date", "created_at"]:
             self.assertIn(field, create_r.data)
+
+
+# ── New AI Feature Tests ───────────────────────────────────────────────────────
+
+def _ai_diagnosis_url(session_id):
+    return f"/api/doctor/patients/sessions/{session_id}/ai-diagnosis/"
+
+
+def _note_draft_url(session_id):
+    return f"/api/doctor/patients/sessions/{session_id}/notes/draft/"
+
+
+def _drug_check_url(session_id):
+    return f"/api/doctor/patients/sessions/{session_id}/prescriptions/check-interactions/"
+
+
+def _cross_summary_url(patient_id):
+    return f"/api/doctor/patients/{patient_id}/summary/"
+
+
+_MOCK_DIAGNOSIS = {
+    "differentials": [
+        {"condition": "Migraine", "likelihood": "high", "reasoning": "Throbbing pain with nausea."}
+    ],
+    "recommended_workup": ["Neurological exam"],
+    "caution": "AI-generated suggestions only.",
+}
+
+_MOCK_DRUG_RESULT_SAFE = {
+    "interactions_found": [],
+    "safe_to_prescribe": True,
+    "caution": "AI check only.",
+}
+
+_MOCK_DRUG_RESULT_INTERACTION = {
+    "interactions_found": [
+        {"drugs": ["Warfarin", "Aspirin"], "severity": "high", "explanation": "Increased bleeding risk."}
+    ],
+    "safe_to_prescribe": False,
+    "caution": "AI check only.",
+}
+
+_MOCK_CROSS_SUMMARY = {
+    "patient_name": "Ali Khan",
+    "session_count": 1,
+    "date_range": {"from": "2026-01-01T00:00:00+00:00", "to": "2026-01-01T00:00:00+00:00"},
+    "sessions": [],
+    "trend_analysis": "Recurring headaches noted.",
+}
+
+_MOCK_SUMMARY = {
+    "chief_complaint": "Headache for two days.",
+    "symptom_details": {},
+    "risk_level": "routine",
+    "recommended_action": "See GP within a week.",
+    "notes_for_doctor": "",
+    "generated_at": "2026-06-21T10:00:00+00:00",
+}
+
+
+class _DoctorAIBase(APITestCase):
+    """Shared setUp for doctor AI feature tests."""
+
+    def setUp(self):
+        dr = self.client.post(DOCTOR_REGISTER_URL, VALID_DOCTOR_PAYLOAD, format="json")
+        self.doctor_token = dr.data["tokens"]["access"]
+
+        pr = self.client.post(PATIENT_REGISTER_URL, VALID_PATIENT_PAYLOAD, format="json")
+        self.patient_token = pr.data["tokens"]["access"]
+        self.patient_id = pr.data["patient_id"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+        sr = self.client.post(PATIENT_SESSIONS_URL, {}, format="json")
+        self.session_id = sr.data["id"]
+
+    def _auth_doctor(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.doctor_token}")
+
+    def _auth_patient(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self.patient_token}")
+
+    def _send_patient_message(self):
+        with patch("patient.views.detect_emergency", return_value=_NON_EMERGENCY), \
+             patch("patient.views.detect_intent", return_value=_SYMPTOM_INTENT), \
+             patch("patient.views.run_triage_graph", return_value=_MOCK_GRAPH_RESULT):
+            self.client.post(
+                f"{PATIENT_SESSIONS_URL}{self.session_id}/messages/",
+                {"content": "I have a headache."},
+                format="json",
+            )
+
+    def _put_session_summary(self):
+        from patient.models import ChatSession
+        ChatSession.objects.filter(id=self.session_id).update(summary=_MOCK_SUMMARY)
+
+
+class AIDiagnosisTests(_DoctorAIBase):
+    """POST /api/doctor/patients/sessions/<id>/ai-diagnosis/"""
+
+    def test_happy_path_returns_201(self):
+        self._send_patient_message()
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_differential_diagnosis", return_value=_MOCK_DIAGNOSIS):
+            r = self.client.post(_ai_diagnosis_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertIn("content", r.data)
+        self.assertIn("differentials", r.data["content"])
+
+    def test_no_messages_returns_400(self):
+        self._auth_doctor()
+        with patch(
+            "doctor.ai_features.generate_differential_diagnosis",
+            side_effect=ValueError("Session has no messages to analyse."),
+        ):
+            r = self.client.post(_ai_diagnosis_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", r.data)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(_ai_diagnosis_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_token_returns_404(self):
+        self._auth_patient()
+        with patch("doctor.ai_features.generate_differential_diagnosis", return_value=_MOCK_DIAGNOSIS):
+            r = self.client.post(_ai_diagnosis_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unknown_session_returns_404(self):
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_differential_diagnosis", return_value=_MOCK_DIAGNOSIS):
+            r = self.client.post(_ai_diagnosis_url("00000000-0000-0000-0000-000000000000"))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_llm_failure_returns_503(self):
+        self._send_patient_message()
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_differential_diagnosis", side_effect=Exception("LLM down")):
+            r = self.client.post(_ai_diagnosis_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+class DoctorNoteDraftTests(_DoctorAIBase):
+    """POST /api/doctor/patients/sessions/<id>/notes/draft/"""
+
+    def test_happy_path_returns_draft(self):
+        self._put_session_summary()
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_soap_draft", return_value="DRAFT: SUBJECTIVE: Headache..."):
+            r = self.client.post(_note_draft_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("draft", r.data)
+        self.assertIsInstance(r.data["draft"], str)
+
+    def test_no_summary_returns_400(self):
+        self._auth_doctor()
+        with patch(
+            "doctor.ai_features.generate_soap_draft",
+            side_effect=ValueError("Session has no clinical summary."),
+        ):
+            r = self.client.post(_note_draft_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", r.data)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(_note_draft_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_token_returns_404(self):
+        self._put_session_summary()
+        self._auth_patient()
+        with patch("doctor.ai_features.generate_soap_draft", return_value="DRAFT"):
+            r = self.client.post(_note_draft_url(self.session_id))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unknown_session_returns_404(self):
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_soap_draft", return_value="DRAFT"):
+            r = self.client.post(_note_draft_url("00000000-0000-0000-0000-000000000000"))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class DrugInteractionCheckTests(_DoctorAIBase):
+    """POST /api/doctor/patients/sessions/<id>/prescriptions/check-interactions/"""
+
+    def test_safe_medications_returns_200(self):
+        self._auth_doctor()
+        with patch("doctor.ai_features.check_drug_interactions", return_value=_MOCK_DRUG_RESULT_SAFE):
+            r = self.client.post(
+                _drug_check_url(self.session_id),
+                {"medications": ["Paracetamol"]},
+                format="json",
+            )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertTrue(r.data["safe_to_prescribe"])
+        self.assertEqual(r.data["interactions_found"], [])
+
+    def test_interaction_found_returns_details(self):
+        self._auth_doctor()
+        with patch("doctor.ai_features.check_drug_interactions", return_value=_MOCK_DRUG_RESULT_INTERACTION):
+            r = self.client.post(
+                _drug_check_url(self.session_id),
+                {"medications": ["Warfarin", "Aspirin"]},
+                format="json",
+            )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertFalse(r.data["safe_to_prescribe"])
+        self.assertEqual(len(r.data["interactions_found"]), 1)
+
+    def test_empty_medications_returns_400(self):
+        self._auth_doctor()
+        r = self.client.post(
+            _drug_check_url(self.session_id),
+            {"medications": []},
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_missing_medications_key_returns_400(self):
+        self._auth_doctor()
+        r = self.client.post(_drug_check_url(self.session_id), {}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.post(_drug_check_url(self.session_id), {"medications": ["X"]}, format="json")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_token_returns_404(self):
+        self._auth_patient()
+        with patch("doctor.ai_features.check_drug_interactions", return_value=_MOCK_DRUG_RESULT_SAFE):
+            r = self.client.post(
+                _drug_check_url(self.session_id),
+                {"medications": ["Paracetamol"]},
+                format="json",
+            )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unknown_session_returns_404(self):
+        self._auth_doctor()
+        with patch("doctor.ai_features.check_drug_interactions", return_value=_MOCK_DRUG_RESULT_SAFE):
+            r = self.client.post(
+                _drug_check_url("00000000-0000-0000-0000-000000000000"),
+                {"medications": ["Paracetamol"]},
+                format="json",
+            )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class PatientCrossSummaryTests(_DoctorAIBase):
+    """GET /api/doctor/patients/<id>/summary/"""
+
+    def test_patient_with_no_sessions_returns_empty(self):
+        self._auth_doctor()
+        r = self.client.get(_cross_summary_url(self.patient_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["session_count"], 0)
+        self.assertEqual(r.data["sessions"], [])
+        self.assertIsNone(r.data["trend_analysis"])
+
+    def test_sessions_without_summary_excluded(self):
+        self._auth_doctor()
+        r = self.client.get(_cross_summary_url(self.patient_id))
+        self.assertEqual(r.data["session_count"], 0)
+
+    def test_sessions_with_summary_included(self):
+        self._put_session_summary()
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_cross_session_summary", return_value=_MOCK_CROSS_SUMMARY):
+            r = self.client.get(_cross_summary_url(self.patient_id))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertIn("sessions", r.data)
+        self.assertIn("patient_name", r.data)
+
+    def test_unknown_patient_returns_404(self):
+        self._auth_doctor()
+        r = self.client.get(_cross_summary_url("00000000-0000-0000-0000-000000000000"))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        r = self.client.get(_cross_summary_url(self.patient_id))
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_patient_token_returns_404(self):
+        self._auth_patient()
+        r = self.client.get(_cross_summary_url(self.patient_id))
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_analyze_false_skips_llm(self):
+        self._put_session_summary()
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_cross_session_summary") as mock_llm:
+            r = self.client.get(f"{_cross_summary_url(self.patient_id)}?analyze=false")
+        mock_llm.assert_not_called()
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+
+class AIPrioritizedQueueTests(_DoctorAIBase):
+    """GET /api/doctor/patients/sessions/?ai_prioritized=true"""
+
+    def _set_risk(self, risk_level):
+        from patient.models import ChatSession
+        ChatSession.objects.filter(id=self.session_id).update(risk_level=risk_level)
+
+    def _create_extra_session(self, risk_level, assign=False):
+        other_patient_payload = {
+            **VALID_PATIENT_PAYLOAD,
+            "email": f"extra_{risk_level}@example.com",
+            "phone": f"0300000{hash(risk_level) % 10000:04d}",
+        }
+        pr = self.client.post(PATIENT_REGISTER_URL, other_patient_payload, format="json")
+        token = pr.data["tokens"]["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        sr = self.client.post(PATIENT_SESSIONS_URL, {}, format="json")
+        sid = sr.data["id"]
+        from patient.models import ChatSession
+        ChatSession.objects.filter(id=sid).update(risk_level=risk_level)
+        return sid
+
+    def test_emergency_session_appears_first(self):
+        self._set_risk("routine")
+        emergency_sid = self._create_extra_session("emergency")
+
+        self._auth_doctor()
+        r = self.client.get(f"{DOCTOR_SESSIONS_URL}?ai_prioritized=true")
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(r.data[0]["session_id"]), emergency_sid)
+
+    def test_urgent_before_routine(self):
+        self._set_risk("routine")
+        urgent_sid = self._create_extra_session("urgent")
+
+        self._auth_doctor()
+        r = self.client.get(f"{DOCTOR_SESSIONS_URL}?ai_prioritized=true")
+        ids = [str(s["session_id"]) for s in r.data]
+        self.assertLess(ids.index(urgent_sid), ids.index(self.session_id))
+
+    def test_without_param_returns_default_order(self):
+        self._auth_doctor()
+        r = self.client.get(DOCTOR_SESSIONS_URL)
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+
+class AuditLogTests(_DoctorAIBase):
+    """AuditLog is created on key doctor actions."""
+
+    def test_view_session_creates_audit_log(self):
+        from doctor.models import AuditLog
+        self._auth_doctor()
+        self.client.get(f"{DOCTOR_SESSIONS_URL}{self.session_id}/")
+        self.assertTrue(AuditLog.objects.filter(action="view_session").exists())
+
+    def test_create_note_creates_audit_log(self):
+        from doctor.models import AuditLog
+        self._auth_doctor()
+        self.client.post(_notes_url(self.session_id), {"note": "Audit test note."}, format="json")
+        self.assertTrue(AuditLog.objects.filter(action="create_note").exists())
+
+    def test_assign_session_creates_audit_log(self):
+        from doctor.models import AuditLog
+        self._auth_doctor()
+        self.client.post(f"{DOCTOR_SESSIONS_URL}{self.session_id}/assign/")
+        self.assertTrue(AuditLog.objects.filter(action="assign_session").exists())
+
+    def test_create_prescription_creates_audit_log(self):
+        from doctor.models import AuditLog
+        self._auth_doctor()
+        self.client.post(_prescriptions_url(self.session_id), VALID_PRESCRIPTION_PAYLOAD, format="json")
+        self.assertTrue(AuditLog.objects.filter(action="create_prescription").exists())
+
+    def test_ai_diagnosis_creates_audit_log(self):
+        from doctor.models import AuditLog
+        self._send_patient_message()
+        self._auth_doctor()
+        with patch("doctor.ai_features.generate_differential_diagnosis", return_value=_MOCK_DIAGNOSIS):
+            self.client.post(_ai_diagnosis_url(self.session_id))
+        self.assertTrue(AuditLog.objects.filter(action="generate_diagnosis").exists())
+
+    def test_patient_action_does_not_create_log(self):
+        from doctor.models import AuditLog
+        self._auth_patient()
+        self.client.get(f"{DOCTOR_SESSIONS_URL}{self.session_id}/")
+        self.assertEqual(AuditLog.objects.count(), 0)

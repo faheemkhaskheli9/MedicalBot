@@ -2,7 +2,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
-from .models import Appointment, ChatSession, EmergencyEvent, MedicalHistory, Message, Patient
+from .models import Appointment, ChatSession, EmergencyEvent, MedicalHistory, Message, Patient, Recommendation
 
 
 class PatientRegisterSerializer(serializers.Serializer):
@@ -141,6 +141,13 @@ class ChatSessionSerializer(serializers.ModelSerializer):
 
     def get_message_count(self, obj):
         return obj.messages.count()
+
+
+class RecommendationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Recommendation
+        fields = ["id", "content", "generated_at"]
+        read_only_fields = fields
 
 
 class ChatSessionListSerializer(serializers.ModelSerializer):

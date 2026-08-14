@@ -1,3 +1,4 @@
+from django.shortcuts import render
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -7,8 +8,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from patient.models import Appointment, ChatSession
 from patient.serializers import AppointmentSerializer
 
-from .models import Doctor, DoctorNote, Prescription
+from .models import AIDiagnosisSuggestion, AuditLog, Doctor, DoctorNote, Prescription
 from .serializers import (
+    AIDiagnosisSuggestionSerializer,
     DoctorAppointmentSerializer,
     DoctorLoginSerializer,
     DoctorNoteSerializer,
@@ -18,6 +20,19 @@ from .serializers import (
     PatientSessionListSerializer,
     PrescriptionSerializer,
 )
+
+
+class AuditLogMixin:
+    def _log(self, request, action: str, target_type: str, target_id):
+        try:
+            AuditLog.objects.create(
+                actor=request.user,
+                action=action,
+                target_type=target_type,
+                target_id=str(target_id),
+            )
+        except Exception:
+            pass
 
 
 class DoctorRegisterView(APIView):
@@ -90,11 +105,22 @@ class PatientSessionListView(APIView):
         if sess_status:
             sessions = sessions.filter(status=sess_status)
 
+        if request.query_params.get("ai_prioritized") == "true":
+            RISK_ORDER = {"emergency": 0, "urgent": 1, "routine": 2, None: 3}
+            sessions = sorted(
+                sessions,
+                key=lambda s: (
+                    RISK_ORDER.get(s.risk_level, 3),
+                    0 if s.assigned_doctor_id is None else 1,
+                    s.started_at,
+                ),
+            )
+
         serializer = PatientSessionListSerializer(sessions, many=True)
         return Response(serializer.data)
 
 
-class PatientSessionDetailForDoctorView(APIView):
+class PatientSessionDetailForDoctorView(AuditLogMixin, APIView):
     """Full session detail (with summary and transcript) for the authenticated doctor."""
     permission_classes = [IsAuthenticated]
 
@@ -109,10 +135,11 @@ class PatientSessionDetailForDoctorView(APIView):
         except ChatSession.DoesNotExist:
             return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        self._log(request, "view_session", "session", session_id)
         return Response(PatientSessionDetailSerializer(session).data)
 
 
-class DoctorNoteListCreateView(APIView):
+class DoctorNoteListCreateView(AuditLogMixin, APIView):
     """List all notes on a session or add a new note (doctor only)."""
     permission_classes = [IsAuthenticated]
 
@@ -145,10 +172,11 @@ class DoctorNoteListCreateView(APIView):
             doctor=doctor,
             note=serializer.validated_data["note"],
         )
+        self._log(request, "create_note", "note", note.id)
         return Response(DoctorNoteSerializer(note).data, status=status.HTTP_201_CREATED)
 
 
-class PrescriptionListCreateView(APIView):
+class PrescriptionListCreateView(AuditLogMixin, APIView):
     """Doctor creates/lists prescriptions for a patient session."""
     permission_classes = [IsAuthenticated]
 
@@ -177,10 +205,11 @@ class PrescriptionListCreateView(APIView):
         serializer = PrescriptionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         prescription = serializer.save(doctor=doctor, session=session)
+        self._log(request, "create_prescription", "prescription", prescription.id)
         return Response(PrescriptionSerializer(prescription).data, status=status.HTTP_201_CREATED)
 
 
-class PrescriptionDetailView(APIView):
+class PrescriptionDetailView(AuditLogMixin, APIView):
     """Retrieve or update a single prescription (only the authoring doctor may update)."""
     permission_classes = [IsAuthenticated]
 
@@ -226,6 +255,7 @@ class PrescriptionDetailView(APIView):
                 {"error": "You can only delete your own prescriptions."},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        self._log(request, "delete_prescription", "prescription", prescription_id)
         prescription.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -292,7 +322,7 @@ class DoctorAppointmentDetailView(APIView):
         return Response(DoctorAppointmentSerializer(appointment).data)
 
 
-class SessionAssignView(APIView):
+class SessionAssignView(AuditLogMixin, APIView):
     """Assign (POST) or unassign (DELETE) the requesting doctor from a session."""
     permission_classes = [IsAuthenticated]
 
@@ -318,6 +348,7 @@ class SessionAssignView(APIView):
             )
         session.assigned_doctor = doctor
         session.save(update_fields=["assigned_doctor"])
+        self._log(request, "assign_session", "session", session_id)
         return Response(
             {
                 "message": "Session assigned successfully.",
@@ -337,10 +368,11 @@ class SessionAssignView(APIView):
             )
         session.assigned_doctor = None
         session.save(update_fields=["assigned_doctor"])
+        self._log(request, "unassign_session", "session", session_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class DoctorNoteDetailView(APIView):
+class DoctorNoteDetailView(AuditLogMixin, APIView):
     """Retrieve or delete a single note (only the authoring doctor may delete)."""
     permission_classes = [IsAuthenticated]
 
@@ -367,5 +399,174 @@ class DoctorNoteDetailView(APIView):
             return err
         if note.doctor_id != doctor.pk:
             return Response({"error": "You can only delete your own notes."}, status=status.HTTP_403_FORBIDDEN)
+        self._log(request, "delete_note", "note", note_id)
         note.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ── Phase 3 — Doctor AI Views ─────────────────────────────────────────────────
+
+class AIDiagnosisView(AuditLogMixin, APIView):
+    """Generate and store an AI differential diagnosis for a session."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            doctor = Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            session = ChatSession.objects.select_related("patient").get(id=session_id)
+        except ChatSession.DoesNotExist:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from .ai_features import generate_differential_diagnosis
+        try:
+            content = generate_differential_diagnosis(session, doctor)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response(
+                {"error": "Failed to generate diagnosis suggestions. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        suggestion = AIDiagnosisSuggestion.objects.create(
+            session=session, doctor=doctor, content=content
+        )
+        self._log(request, "generate_diagnosis", "session", session_id)
+        return Response(AIDiagnosisSuggestionSerializer(suggestion).data, status=status.HTTP_201_CREATED)
+
+
+class DoctorNoteDraftView(APIView):
+    """Generate an AI SOAP note draft for a session (requires clinical summary)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            session = ChatSession.objects.get(id=session_id)
+        except ChatSession.DoesNotExist:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from .ai_features import generate_soap_draft
+        try:
+            draft = generate_soap_draft(session)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response(
+                {"error": "Failed to generate note draft. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response({"draft": draft})
+
+
+class DrugInteractionCheckView(APIView):
+    """Check proposed medications for interactions with the patient's current medications."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            session = ChatSession.objects.select_related("patient").get(id=session_id)
+        except ChatSession.DoesNotExist:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        medications = request.data.get("medications", [])
+        if not isinstance(medications, list) or not medications:
+            return Response(
+                {"error": "medications must be a non-empty list."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from .ai_features import check_drug_interactions
+        try:
+            result = check_drug_interactions(medications, str(session.patient.patient_id))
+        except Exception:
+            return Response(
+                {"error": "Failed to check drug interactions. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        return Response(result)
+
+
+class PatientCrossSummaryView(APIView):
+    """Return a cross-session summary of a patient's health history for a doctor."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, patient_id):
+        try:
+            Doctor.objects.get(pk=request.user.pk)
+        except Doctor.DoesNotExist:
+            return Response({"error": "Doctor profile not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        from patient.models import Patient
+        try:
+            patient = Patient.objects.get(patient_id=patient_id)
+        except Patient.DoesNotExist:
+            return Response({"error": "Patient not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        sessions_with_summaries = list(
+            patient.chat_sessions.exclude(summary__isnull=True).order_by("started_at")
+        )
+
+        analyze = request.query_params.get("analyze", "true").lower() != "false"
+
+        if not sessions_with_summaries:
+            return Response({
+                "patient_name": patient.name,
+                "session_count": 0,
+                "date_range": None,
+                "sessions": [],
+                "trend_analysis": None,
+            })
+
+        from .ai_features import generate_cross_session_summary
+        if analyze:
+            try:
+                result = generate_cross_session_summary(patient, sessions_with_summaries)
+            except Exception:
+                analyze = False
+
+        if not analyze:
+            # Return basic timeline without LLM call
+            entries = [
+                {
+                    "session_id": str(s.id),
+                    "date": s.started_at.isoformat(),
+                    "risk_level": s.risk_level,
+                    "chief_complaint": s.summary.get("chief_complaint"),
+                    "recommended_action": s.summary.get("recommended_action"),
+                    "notes_for_doctor": s.summary.get("notes_for_doctor"),
+                }
+                for s in sessions_with_summaries
+            ]
+            dates = [s.started_at.isoformat() for s in sessions_with_summaries]
+            result = {
+                "patient_name": patient.name,
+                "session_count": len(entries),
+                "date_range": {"from": dates[0], "to": dates[-1]} if dates else None,
+                "sessions": entries,
+                "trend_analysis": None,
+            }
+
+        return Response(result)
+
+
+def doctor_login_page(request):
+    return render(request, "doctor/login.html")
+
+
+def doctor_register_page(request):
+    return render(request, "doctor/register.html")
+
+
+def doctor_dashboard_page(request):
+    return render(request, "doctor/dashboard.html")
