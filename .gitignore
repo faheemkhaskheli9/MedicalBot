@@ -16,5 +16,5 @@ db.sqlite3
 .coverage
 *.log
 
-# Claude Code local settings
+# Local dev-tool settings
 .claude/
